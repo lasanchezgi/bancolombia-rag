@@ -1,0 +1,66 @@
+version: "3.9"
+
+networks:
+  rag-network:
+    driver: bridge
+
+services:
+  # ─── ChromaDB: vector store ────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./.chroma:/chroma/.chroma
+    networks:
+      - rag-network
+    environment:
+      CHROMA_SERVER_HOST: "0.0.0.0"
+
+  # ─── MCP Server: expone herramientas de retrieval via FastMCP ──────────────
+  mcp_server:
+    build: .
+    command: ["uv", "run", "python", "-m", "src.mcp_server.server"]
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      CHROMA_HOST: chromadb
+    depends_on:
+      - chromadb
+    networks:
+      - rag-network
+
+  # ─── Agent: loop conversacional OpenAI ────────────────────────────────────
+  agent:
+    build: .
+    command: ["uv", "run", "python", "-m", "src.agent.agent"]
+    env_file: .env
+    environment:
+      CHROMA_HOST: chromadb
+      MCP_SERVER_HOST: mcp_server
+    depends_on:
+      - mcp_server
+    networks:
+      - rag-network
+
+  # ─── Frontend: Streamlit chat UI ──────────────────────────────────────────
+  frontend:
+    build: .
+    command:
+      - uv
+      - run
+      - streamlit
+      - run
+      - src/frontend/app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      MCP_SERVER_HOST: mcp_server
+    depends_on:
+      - agent
+    networks:
+      - rag-network
