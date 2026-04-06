@@ -1,52 +1,65 @@
 """
 Punto de entrada del servidor FastMCP para bancolombia-rag.
 
-Instancia la aplicación FastMCP, delega el registro de herramientas
-a tools.register_tools() y arranca el servidor en MCP_SERVER_HOST:MCP_SERVER_PORT.
+Instancia la aplicación FastMCP, registra las herramientas de retrieval
+y soporta transporte dual: stdio (para el agente interno) y SSE (para
+clientes externos como Claude Desktop).
 
-Puede ejecutarse directamente como módulo:
-    uv run python -m src.mcp_server.server
+Uso:
+    uv run python src/mcp_server/server.py              # stdio (default)
+    MCP_TRANSPORT=sse uv run python src/mcp_server/server.py  # SSE
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
+from dotenv import load_dotenv
 from fastmcp import FastMCP
 
-from .tools import register_tools
+try:
+    from .tools import register_tools
+except ImportError:
+    from src.mcp_server.tools import register_tools  # type: ignore[no-redef]
 
 
 def create_server() -> FastMCP:
     """Construye y configura la instancia del servidor FastMCP.
 
-    Crea el servidor, registra las herramientas de retrieval (search_knowledge_base,
-    get_article_by_url, list_categories) y el resource knowledgebase://stats,
-    y devuelve la instancia lista para iniciar la escucha.
+    Crea el servidor con instrucciones para el agente, registra las
+    herramientas de retrieval y el resource de estadísticas.
 
     Returns:
         Instancia de FastMCP completamente configurada.
     """
-    mcp: FastMCP = FastMCP("bancolombia-rag")
+    load_dotenv()
+
+    mcp: FastMCP = FastMCP(
+        name="BancolombiaKnowledgeBase",
+        instructions=(
+            "Servidor MCP que expone la base de conocimiento del sitio web de Bancolombia personas. "
+            "Contiene información sobre cuentas, tarjetas de crédito, tarjetas débito, créditos, "
+            "beneficios y giros internacionales. "
+            "Usa search_knowledge_base para buscar información relevante, "
+            "get_article_by_url para obtener contenido completo de una página específica, "
+            "y list_categories para ver qué temas están disponibles."
+        ),
+    )
 
     register_tools(mcp)
-
-    @mcp.resource("knowledgebase://stats")  # type: ignore[misc]
-    def knowledgebase_stats() -> dict[str, Any]:
-        """Devuelve estadísticas agregadas de la base de conocimiento indexada.
-
-        Returns:
-            Dict con métricas como ``total_documents``, ``total_categories``
-            y ``last_indexed_at``.
-        """
-        raise NotImplementedError
-
     return mcp
 
 
 if __name__ == "__main__":
+    load_dotenv()
+
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
     server = create_server()
-    host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
-    port = int(os.getenv("MCP_SERVER_PORT", "8080"))
-    server.run(host=host, port=port)
+
+    if transport == "sse":
+        host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
+        port = int(os.getenv("MCP_SERVER_PORT", "8000"))
+        print(f"Starting MCP server SSE on {host}:{port}")
+        server.run(transport="sse", host=host, port=port)
+    else:
+        server.run(transport="stdio")

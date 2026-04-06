@@ -1,67 +1,189 @@
 """
 Definición de herramientas MCP para el pipeline de retrieval RAG.
 
-Cada función decorada con @mcp.tool se convierte en una herramienta invocable
-por cualquier cliente MCP compatible (e.g. el agente OpenAI). Las herramientas
-encapsulan las operaciones de búsqueda y recuperación sobre el vector store.
+Las tres tools (search_knowledge_base, get_article_by_url, list_categories)
+y el resource (knowledgebase://stats) encapsulan el acceso al vector store
+de ChromaDB. Cada tool maneja sus propios errores y nunca lanza excepciones
+al agente, devolviendo en su lugar un dict con la clave "error".
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+from collections import Counter
 from typing import Any
 
 from fastmcp import FastMCP
 
+from src.embeddings.embedder import Embedder
+from src.vector_store.chroma_repository import ChromaRepository
+
+logger = logging.getLogger(__name__)
+
+
+def _get_repository() -> ChromaRepository:
+    """Instancia ChromaRepository con config del entorno."""
+    host = os.getenv("CHROMA_HOST", "local")
+    port = int(os.getenv("CHROMA_PORT", "8000"))
+    collection = os.getenv("CHROMA_COLLECTION", "bancolombia_kb")
+    return ChromaRepository(host=host, port=port, collection_name=collection)
+
+
+def _get_embedder() -> Embedder:
+    """Instancia Embedder con config del entorno."""
+    api_key = os.environ["OPENAI_API_KEY"]
+    return Embedder(api_key=api_key)
+
 
 def register_tools(mcp: FastMCP) -> None:
-    """Registra todas las herramientas de retrieval en la instancia FastMCP.
-
-    Las herramientas se definen como funciones internas decoradas con
-    ``@mcp.tool`` para que FastMCP las descubra y exponga automáticamente.
+    """Registra las 3 tools y el resource en la instancia FastMCP.
 
     Args:
         mcp: Instancia de FastMCP sobre la que se registran las herramientas.
     """
 
     @mcp.tool  # type: ignore[misc]
-    def search_knowledge_base(query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """Busca artículos en la base de conocimiento relevantes para una consulta.
+    def search_knowledge_base(query: str, top_k: int = 5, category: str | None = None) -> dict[str, Any]:
+        """Busca información sobre productos, servicios y contenido de Bancolombia en la base de conocimiento.
 
-        Genera el embedding de la consulta y recupera los ``top_k`` chunks
-        más similares almacenados en ChromaDB.
+        Usa esta herramienta cuando el usuario pregunte sobre cuentas, tarjetas, créditos,
+        beneficios, giros, o cualquier producto o servicio bancario.
+        Retorna los fragmentos más relevantes con sus fuentes (URLs).
 
         Args:
-            query: Pregunta o términos de búsqueda en lenguaje natural.
-            top_k: Número de resultados a devolver (default: 5).
-
-        Returns:
-            Lista de dicts con ``document`` (texto), ``metadata`` y ``score``.
+            query: Pregunta o consulta en lenguaje natural del usuario
+            top_k: Número de resultados a retornar (default: 5, max: 10)
+            category: Filtrar por categoría específica. Categorías disponibles: cuentas,
+                      tarjetas-de-credito, tarjetas-debito, creditos, beneficios, giros, general. Opcional.
         """
-        raise NotImplementedError
+        try:
+            embedder = _get_embedder()
+            repository = _get_repository()
+
+            embeddings = embedder.embed_texts([query])
+            query_embedding = embeddings[0]
+
+            filters = {"category": {"$eq": category}} if category else None
+            results = repository.query(query_embedding=query_embedding, top_k=min(top_k, 10), filters=filters)
+
+            if not results:
+                return {"results": [], "total": 0, "message": "No se encontró información relevante", "query": query}
+
+            return {
+                "results": [
+                    {
+                        "text": r["text"],
+                        "url": r["url"],
+                        "title": r["title"],
+                        "category": r["category"],
+                        "relevance_score": r["score"],
+                        "chunk_index": r["chunk_index"],
+                    }
+                    for r in results
+                ],
+                "total": len(results),
+                "query": query,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error en search_knowledge_base: %s", exc)
+            return {"error": str(exc), "results": [], "total": 0, "query": query}
 
     @mcp.tool  # type: ignore[misc]
     def get_article_by_url(url: str) -> dict[str, Any]:
-        """Recupera el artículo indexado correspondiente a una URL específica.
+        """Recupera el contenido completo de un artículo o página de Bancolombia dado su URL.
+
+        Usa esta herramienta cuando el usuario pida más detalles sobre una página específica,
+        o cuando search_knowledge_base retorne una URL relevante y necesites el contenido completo.
 
         Args:
-            url: URL exacta del artículo tal como fue indexada durante el scraping.
-
-        Returns:
-            Dict con ``url``, ``title``, ``document`` y ``metadata`` del artículo.
-
-        Raises:
-            KeyError: Si no existe ningún artículo indexado con esa URL.
+            url: URL completa de la página de Bancolombia (ej: https://www.bancolombia.com/personas/cuentas/...)
         """
-        raise NotImplementedError
+        try:
+            repository = _get_repository()
+
+            raw = repository.collection.get(where={"url": {"$eq": url}})
+            ids = raw.get("ids", [])
+            if not ids:
+                return {"found": False, "url": url, "message": "Artículo no encontrado en la base de conocimiento"}
+
+            documents = raw.get("documents", [])
+            metadatas = raw.get("metadatas", [])
+
+            # Ordenar chunks por chunk_index
+            combined = sorted(zip(metadatas, documents), key=lambda x: x[0].get("chunk_index", 0))
+
+            meta0 = combined[0][0]
+            full_text = "\n\n".join(doc for _, doc in combined)
+
+            return {
+                "found": True,
+                "url": url,
+                "title": meta0.get("title", ""),
+                "category": meta0.get("category", ""),
+                "full_text": full_text,
+                "total_chunks": len(combined),
+                "extraction_date": meta0.get("extraction_date", ""),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error en get_article_by_url: %s", exc)
+            return {"error": str(exc), "found": False, "url": url}
 
     @mcp.tool  # type: ignore[misc]
-    def list_categories() -> list[str]:
-        """Lista todas las categorías temáticas disponibles en la base de conocimiento.
+    def list_categories() -> dict[str, Any]:
+        """Lista todas las categorías disponibles en la base de conocimiento de Bancolombia con el número de documentos.
 
-        Las categorías se derivan de los metadatos almacenados durante la indexación
-        y permiten al agente orientar búsquedas dentro de un dominio específico.
-
-        Returns:
-            Lista de strings con los nombres de las categorías únicas indexadas.
+        Usa esta herramienta cuando el usuario pregunte qué temas o productos cubre el asistente,
+        o antes de usar search_knowledge_base con filtro de categoría.
         """
-        raise NotImplementedError
+        try:
+            repository = _get_repository()
+            collection_name = os.getenv("CHROMA_COLLECTION", "bancolombia_kb")
+
+            raw = repository.collection.get()
+            metadatas = raw.get("metadatas", []) or []
+
+            counts: Counter[str] = Counter(m.get("category", "general") for m in metadatas)
+
+            return {
+                "categories": [{"name": cat, "document_count": n} for cat, n in counts.most_common()],
+                "total_documents": len(metadatas),
+                "collection_name": collection_name,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error en list_categories: %s", exc)
+            return {"error": str(exc), "categories": [], "total_documents": 0}
+
+    @mcp.resource("knowledgebase://stats")  # type: ignore[misc]
+    def get_kb_stats() -> str:
+        """Estadísticas de la base de conocimiento de Bancolombia."""
+        try:
+            repository = _get_repository()
+            collection_name = os.getenv("CHROMA_COLLECTION", "bancolombia_kb")
+            chroma_host = os.getenv("CHROMA_HOST", "local")
+
+            raw = repository.collection.get()
+            metadatas = raw.get("metadatas", []) or []
+
+            counts: Counter[str] = Counter(m.get("category", "general") for m in metadatas)
+
+            extraction_dates = [m.get("extraction_date", "") for m in metadatas if m.get("extraction_date")]
+            last_updated = max(extraction_dates) if extraction_dates else ""
+
+            return json.dumps(
+                {
+                    "total_documents": len(metadatas),
+                    "collection_name": collection_name,
+                    "embedding_model": "text-embedding-3-small",
+                    "embedding_dimensions": 1536,
+                    "categories": dict(counts),
+                    "last_updated": last_updated,
+                    "chroma_mode": "local" if chroma_host == "local" else "http",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error en get_kb_stats: %s", exc)
+            return json.dumps({"error": str(exc)})
