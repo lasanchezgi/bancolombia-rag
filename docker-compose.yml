@@ -11,10 +11,11 @@ services:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/heartbeat || exit 1"]
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 30s
     networks:
       - rag_network
 
