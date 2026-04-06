@@ -118,39 +118,36 @@ dependencies = [
     { name = "streamlit" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "black" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "ruff" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.13.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "chromadb", specifier = ">=0.5.0" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "openai", specifier = ">=1.50.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "streamlit", specifier = ">=1.35.0" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = ">=0.15.9" }]
+dev = [
+    { name = "anyio", specifier = ">=4.0.0" },
+    { name = "black", specifier = ">=24.0.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
+    { name = "ruff", specifier = ">=0.4.0" },
+]
 
 [[package]]
 name = "bcrypt"
