@@ -12,8 +12,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-_CHUNK_SIZE = 500       # palabras por chunk
-_CHUNK_OVERLAP = 50    # palabras compartidas entre chunks adyacentes
+_CHUNK_SIZE = 500  # palabras por chunk
+_CHUNK_OVERLAP = 50  # palabras compartidas entre chunks adyacentes
 _SEPARATORS = ["\n\n", "\n", ". ", " ", ""]
 _MIN_WORDS = 10
 

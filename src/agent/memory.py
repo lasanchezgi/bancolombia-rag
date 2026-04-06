@@ -43,7 +43,7 @@ class ShortTermMemory:
         self._messages.append({"role": role, "content": content})
         if len(self._messages) > self.max_messages:
             # Preservar system (index 0) + los (max_messages - 1) más recientes
-            self._messages = [self._messages[0]] + self._messages[-(self.max_messages - 1):]
+            self._messages = [self._messages[0]] + self._messages[-(self.max_messages - 1) :]
 
     def get_messages(self) -> list[dict[str, str]]:
         """Retorna historial completo para pasar a OpenAI."""
@@ -78,9 +78,7 @@ class MidTermMemory:
             return
         try:
             conversation_text = "\n".join(
-                f"{m['role'].upper()}: {m['content']}"
-                for m in messages
-                if m["role"] in ("user", "assistant")
+                f"{m['role'].upper()}: {m['content']}" for m in messages if m["role"] in ("user", "assistant")
             )
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",

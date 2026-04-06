@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.scraper.crawler import Crawler, _BLOCKED_PATTERNS
+from src.scraper.crawler import _BLOCKED_PATTERNS, Crawler
 from src.scraper.parser import Parser
 from src.scraper.storage import ScraperStorage
 

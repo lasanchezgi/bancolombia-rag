@@ -20,7 +20,16 @@ from .repository import VectorStoreRepository
 
 logger = logging.getLogger(__name__)
 
-_METADATA_KEYS = ("url", "title", "category", "subcategory", "extraction_date", "chunk_index", "total_chunks", "word_count")
+_METADATA_KEYS = (
+    "url",
+    "title",
+    "category",
+    "subcategory",
+    "extraction_date",
+    "chunk_index",
+    "total_chunks",
+    "word_count",
+)
 
 
 class ChromaRepository(VectorStoreRepository):
@@ -66,10 +75,7 @@ class ChromaRepository(VectorStoreRepository):
         ids = [c["chunk_id"] for c in chunks]
         embeddings = [c["embedding"] for c in chunks]
         documents = [c["text"] for c in chunks]
-        metadatas = [
-            {k: c.get(k, "") for k in _METADATA_KEYS}
-            for c in chunks
-        ]
+        metadatas = [{k: c.get(k, "") for k in _METADATA_KEYS} for c in chunks]
 
         self.collection.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
         logger.info("Upserted %d documents to ChromaDB collection '%s'", len(chunks), self.collection_name)

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.pipeline.cleaner import Cleaner
 from src.pipeline.chunker import Chunker
+from src.pipeline.cleaner import Cleaner
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixtures y datos de prueba
@@ -64,7 +64,8 @@ def cleaned_page(cleaner: Cleaner) -> dict:
 class TestCleaner:
     def test_clean_removes_urls(self, cleaner: Cleaner) -> None:
         """URLs deben eliminarse del texto limpio."""
-        page = {**SAMPLE_PAGE, "text": LONG_TEXT + " Visita https://www.bancolombia.com/info para mas datos sobre servicios."}
+        extra = " Visita https://www.bancolombia.com/info para mas datos sobre servicios."
+        page = {**SAMPLE_PAGE, "text": LONG_TEXT + extra}
         result = cleaner.clean(page)
         assert result is not None
         assert "https://" not in result["clean_text"]
@@ -72,14 +73,20 @@ class TestCleaner:
 
     def test_clean_collapses_multiple_spaces(self, cleaner: Cleaner) -> None:
         """Multiples espacios consecutivos deben colapsar en uno solo."""
-        page = {**SAMPLE_PAGE, "text": "Texto   con   muchos   espacios   redundantes entre palabras comunes de uso diario."}
+        page = {**SAMPLE_PAGE, "text": "Texto   con   muchos   espacios   redundantes entre palabras comunes."}
+
         result = cleaner.clean(page)
         if result is not None:
             assert "  " not in result["clean_text"]
 
     def test_clean_collapses_multiple_newlines(self, cleaner: Cleaner) -> None:
         """Tres o mas saltos de linea consecutivos deben reducirse a dos."""
-        page = {**SAMPLE_PAGE, "text": "Parrafo uno con bastante contenido util.\n\n\n\nParrafo dos con suficiente contenido para superar el minimo requerido."}
+        text = (
+            "Parrafo uno con bastante contenido util."
+            "\n\n\n\n"
+            "Parrafo dos con suficiente contenido para superar el minimo requerido."
+        )
+        page = {**SAMPLE_PAGE, "text": text}
         result = cleaner.clean(page)
         if result is not None:
             assert "\n\n\n" not in result["clean_text"]
@@ -124,7 +131,8 @@ class TestCleaner:
 
     def test_clean_removes_special_characters(self, cleaner: Cleaner) -> None:
         """Caracteres como @, #, $ deben eliminarse del texto limpio."""
-        page = {**SAMPLE_PAGE, "text": LONG_TEXT + " @usuario #hashtag $precio caret ampersand caracteres raros especiales."}
+        extra = " @usuario #hashtag $precio caret ampersand caracteres raros especiales."
+        page = {**SAMPLE_PAGE, "text": LONG_TEXT + extra}
         result = cleaner.clean(page)
         assert result is not None
         assert "@" not in result["clean_text"]
@@ -149,8 +157,16 @@ class TestChunker:
         result = chunker.chunk(cleaned_page)
         assert len(result) > 0
         required = {
-            "chunk_id", "url", "title", "category", "subcategory",
-            "extraction_date", "chunk_index", "total_chunks", "text", "word_count",
+            "chunk_id",
+            "url",
+            "title",
+            "category",
+            "subcategory",
+            "extraction_date",
+            "chunk_index",
+            "total_chunks",
+            "text",
+            "word_count",
         }
         for chunk in result:
             assert required.issubset(chunk.keys())

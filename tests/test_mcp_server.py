@@ -19,7 +19,6 @@ from fastmcp import FastMCP
 
 from src.mcp_server.server import create_server
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -130,7 +129,10 @@ class TestSearchKnowledgeBase:
     def test_search_returns_required_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """search_knowledge_base debe retornar JSON con 'results', 'total' y 'query'."""
         _mock_env(monkeypatch)
-        with patch("src.mcp_server.tools._get_repository", return_value=self._make_mock_repo()), patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()):
+        with (
+            patch("src.mcp_server.tools._get_repository", return_value=self._make_mock_repo()),
+            patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()),
+        ):
             content = _call_tool(self._make_mcp(), "search_knowledge_base", {"query": "cuentas de ahorro"})
         assert "results" in content
         assert "total" in content
@@ -139,7 +141,10 @@ class TestSearchKnowledgeBase:
     def test_search_results_contain_expected_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cada resultado debe tener text, url, title, category, relevance_score."""
         _mock_env(monkeypatch)
-        with patch("src.mcp_server.tools._get_repository", return_value=self._make_mock_repo()), patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()):
+        with (
+            patch("src.mcp_server.tools._get_repository", return_value=self._make_mock_repo()),
+            patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()),
+        ):
             content = _call_tool(self._make_mcp(), "search_knowledge_base", {"query": "cuentas"})
         assert "relevance_score" in content
         assert "url" in content
@@ -150,7 +155,10 @@ class TestSearchKnowledgeBase:
         _mock_env(monkeypatch)
         mock_repo = MagicMock()
         mock_repo.query.return_value = []
-        with patch("src.mcp_server.tools._get_repository", return_value=mock_repo), patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()):
+        with (
+            patch("src.mcp_server.tools._get_repository", return_value=mock_repo),
+            patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()),
+        ):
             content = _call_tool(self._make_mcp(), "search_knowledge_base", {"query": "xyz123 inexistente"})
         assert "No se encontró" in content or '"total": 0' in content
 
@@ -159,7 +167,10 @@ class TestSearchKnowledgeBase:
         _mock_env(monkeypatch)
         mock_repo = MagicMock()
         mock_repo.query.side_effect = ConnectionError("ChromaDB no disponible")
-        with patch("src.mcp_server.tools._get_repository", return_value=mock_repo), patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()):
+        with (
+            patch("src.mcp_server.tools._get_repository", return_value=mock_repo),
+            patch("src.mcp_server.tools._get_embedder", return_value=self._make_mock_embedder()),
+        ):
             content = _call_tool(self._make_mcp(), "search_knowledge_base", {"query": "test"})
         assert "error" in content.lower()
 
@@ -179,10 +190,20 @@ class TestGetArticleByUrl:
         mock_repo.collection.get.return_value = {
             "ids": ["chunk_0"],
             "documents": ["Texto del artículo completo"],
-            "metadatas": [{"url": "https://www.bancolombia.com/personas/cuentas", "title": "Cuentas", "category": "cuentas", "chunk_index": 0, "extraction_date": "2024-01-01"}],
+            "metadatas": [
+                {
+                    "url": "https://www.bancolombia.com/personas/cuentas",
+                    "title": "Cuentas",
+                    "category": "cuentas",
+                    "chunk_index": 0,
+                    "extraction_date": "2024-01-01",
+                }
+            ],
         }
         with patch("src.mcp_server.tools._get_repository", return_value=mock_repo):
-            content = _call_tool(self._make_mcp(), "get_article_by_url", {"url": "https://www.bancolombia.com/personas/cuentas"})
+            content = _call_tool(
+                self._make_mcp(), "get_article_by_url", {"url": "https://www.bancolombia.com/personas/cuentas"}
+            )
         assert '"found": true' in content or '"found":true' in content
 
     def test_get_article_returns_full_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +229,9 @@ class TestGetArticleByUrl:
         mock_repo = MagicMock()
         mock_repo.collection.get.return_value = {"ids": [], "documents": [], "metadatas": []}
         with patch("src.mcp_server.tools._get_repository", return_value=mock_repo):
-            content = _call_tool(self._make_mcp(), "get_article_by_url", {"url": "https://www.bancolombia.com/no-existe"})
+            content = _call_tool(
+                self._make_mcp(), "get_article_by_url", {"url": "https://www.bancolombia.com/no-existe"}
+            )
         assert '"found": false' in content or "no encontrado" in content.lower() or "False" in content
 
     def test_get_article_handles_chroma_error(self, monkeypatch: pytest.MonkeyPatch) -> None:

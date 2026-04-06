@@ -100,7 +100,13 @@ class Embedder:
             except (RateLimitError, APIError) as exc:
                 last_exc = exc
                 if attempt < _MAX_RETRIES:
-                    logger.warning("OpenAI error (attempt %d/%d): %s — retrying in %.1fs", attempt, _MAX_RETRIES, exc, _RETRY_BACKOFF)
+                    logger.warning(
+                        "OpenAI error (attempt %d/%d): %s - retrying in %.1fs",
+                        attempt,
+                        _MAX_RETRIES,
+                        exc,
+                        _RETRY_BACKOFF,
+                    )
                     time.sleep(_RETRY_BACKOFF)
 
         raise last_exc  # type: ignore[misc]

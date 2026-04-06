@@ -119,9 +119,7 @@ class Crawler:
             logger.warning("Error inesperado en %s: %s", url, exc)
             return None
 
-    async def crawl(
-        self, sitemap_url: str, max_pages: int
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    async def crawl(self, sitemap_url: str, max_pages: int) -> AsyncGenerator[dict[str, Any], None]:
         """Crawlea páginas del sitemap y genera dicts de páginas descargadas.
 
         Obtiene URLs del sitemap, limita a ``max_pages``, y descarga cada

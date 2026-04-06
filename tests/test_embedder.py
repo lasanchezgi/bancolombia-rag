@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from openai import RateLimitError
 
-from src.embeddings.embedder import Embedder, _BATCH_SIZE
+from src.embeddings.embedder import Embedder
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -43,7 +42,11 @@ class TestEmbedTexts:
         embedder = _make_embedder()
         texts = ["texto uno", "texto dos", "texto tres"]
 
-        with patch.object(embedder.client.embeddings, "create", side_effect=lambda **kw: _make_embedding_response(kw["input"])):
+        with patch.object(
+            embedder.client.embeddings,
+            "create",
+            side_effect=lambda **kw: _make_embedding_response(kw["input"]),
+        ):
             result = embedder.embed_texts(texts)
 
         assert isinstance(result, list)
@@ -56,7 +59,11 @@ class TestEmbedTexts:
         embedder = _make_embedder()
         texts = [f"texto {i}" for i in range(5)]
 
-        with patch.object(embedder.client.embeddings, "create", side_effect=lambda **kw: _make_embedding_response(kw["input"])):
+        with patch.object(
+            embedder.client.embeddings,
+            "create",
+            side_effect=lambda **kw: _make_embedding_response(kw["input"]),
+        ):
             result = embedder.embed_texts(texts)
 
         assert len(result) == 5
@@ -97,7 +104,6 @@ class TestEmbedTexts:
         def side_effect(**kw):
             call_count["n"] += 1
             if call_count["n"] < 3:
-                mock_req = MagicMock()
                 mock_res = MagicMock()
                 mock_res.status_code = 429
                 raise RateLimitError("rate limit", response=mock_res, body={})
@@ -120,7 +126,11 @@ class TestEmbedChunks:
             {"chunk_id": "c_1", "text": "texto dos", "url": "https://example.com"},
         ]
 
-        with patch.object(embedder.client.embeddings, "create", side_effect=lambda **kw: _make_embedding_response(kw["input"])):
+        with patch.object(
+            embedder.client.embeddings,
+            "create",
+            side_effect=lambda **kw: _make_embedding_response(kw["input"]),
+        ):
             result = embedder.embed_chunks(chunks)
 
         assert len(result) == 2
@@ -134,7 +144,11 @@ class TestEmbedChunks:
         embedder = _make_embedder()
         chunks = [{"chunk_id": "abc_0", "text": "contenido", "url": "https://x.com", "category": "cuentas"}]
 
-        with patch.object(embedder.client.embeddings, "create", side_effect=lambda **kw: _make_embedding_response(kw["input"])):
+        with patch.object(
+            embedder.client.embeddings,
+            "create",
+            side_effect=lambda **kw: _make_embedding_response(kw["input"]),
+        ):
             result = embedder.embed_chunks(chunks)
 
         assert result[0]["chunk_id"] == "abc_0"
@@ -145,7 +159,11 @@ class TestEmbedChunks:
         """embed_chunks([]) debe devolver []."""
         embedder = _make_embedder()
 
-        with patch.object(embedder.client.embeddings, "create", side_effect=lambda **kw: _make_embedding_response(kw["input"])):
+        with patch.object(
+            embedder.client.embeddings,
+            "create",
+            side_effect=lambda **kw: _make_embedding_response(kw["input"]),
+        ):
             result = embedder.embed_chunks([])
 
         assert result == []

@@ -24,7 +24,9 @@ class _StubRepository(VectorStoreRepository):
         for chunk in chunks:
             self._docs[chunk["chunk_id"]] = chunk
 
-    def query(self, query_embedding: list[float], top_k: int, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def query(
+        self, query_embedding: list[float], top_k: int, filters: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         return list(self._docs.values())[:top_k]
 
     def delete_collection(self) -> None:
