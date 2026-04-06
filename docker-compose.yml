@@ -37,6 +37,7 @@ services:
     volumes:
       - .memory:/app/.memory          # LongTermMemory persistida entre reinicios
       - ./data:/app/data              # datos del scraper accesibles al frontend
+      - ./.env:/app/.env:ro           # .env disponible dentro del contenedor
       - chroma_data_local:/app/.chroma  # ChromaDB local como fallback
     depends_on:
       - chromadb

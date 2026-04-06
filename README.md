@@ -124,6 +124,10 @@ uv run streamlit run src/frontend/app.py
 
 ### Ejecutar con Docker Compose
 
+> **Importante:** antes de correr `docker compose up`,
+> asegúrate de que el archivo `.env` existe en la raíz
+> del proyecto con todas las variables configuradas.
+
 ```bash
 # Levantar ChromaDB + frontend
 docker-compose up -d
