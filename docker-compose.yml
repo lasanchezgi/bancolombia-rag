@@ -1,66 +1,99 @@
-version: "3.9"
-
-networks:
-  rag-network:
-    driver: bridge
-
 services:
-  # ─── ChromaDB: vector store ────────────────────────────────────────────────
+
+  # ─── ChromaDB: vector store persistente ────────────────────────────────────
   chromadb:
     image: chromadb/chroma:latest
     ports:
       - "8000:8000"
     volumes:
-      - ./.chroma:/chroma/.chroma
-    networks:
-      - rag-network
+      - chroma_data:/chroma/chroma
     environment:
-      CHROMA_SERVER_HOST: "0.0.0.0"
-
-  # ─── MCP Server: expone herramientas de retrieval via FastMCP ──────────────
-  mcp_server:
-    build: .
-    command: ["uv", "run", "python", "-m", "src.mcp_server.server"]
-    ports:
-      - "8080:8080"
-    env_file: .env
-    environment:
-      CHROMA_HOST: chromadb
-    depends_on:
-      - chromadb
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
-      - rag-network
+      - rag_network
 
-  # ─── Agent: loop conversacional OpenAI ────────────────────────────────────
-  agent:
-    build: .
-    command: ["uv", "run", "python", "-m", "src.agent.agent"]
-    env_file: .env
-    environment:
-      CHROMA_HOST: chromadb
-      MCP_SERVER_HOST: mcp_server
-    depends_on:
-      - mcp_server
-    networks:
-      - rag-network
-
-  # ─── Frontend: Streamlit chat UI ──────────────────────────────────────────
+  # ─── Frontend: Streamlit chat UI ───────────────────────────────────────────
+  # El agente que corre dentro del frontend lanza el mcp_server como proceso
+  # hijo via stdio — NO como servicio de red separado. Esto es el patrón
+  # correcto del protocolo MCP con transporte stdio.
   frontend:
-    build: .
-    command:
-      - uv
-      - run
-      - streamlit
-      - run
-      - src/frontend/app.py
-      - --server.port=8501
-      - --server.address=0.0.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      uv run streamlit run src/frontend/app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
     ports:
       - "8501:8501"
-    env_file: .env
+    env_file:
+      - .env
     environment:
-      MCP_SERVER_HOST: mcp_server
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - MCP_SERVER_SCRIPT=src/mcp_server/server.py
+    volumes:
+      - .memory:/app/.memory          # LongTermMemory persistida entre reinicios
+      - ./data:/app/data              # datos del scraper accesibles al frontend
+      - chroma_data_local:/app/.chroma  # ChromaDB local como fallback
     depends_on:
-      - agent
+      chromadb:
+        condition: service_healthy
     networks:
-      - rag-network
+      - rag_network
+    restart: unless-stopped
+
+  # ─── Scraper: job one-time ─────────────────────────────────────────────────
+  # Uso: docker compose --profile tools up scraper
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uv run python scripts/run_scraper.py
+    env_file:
+      - .env
+    environment:
+      - MAX_PAGES=80
+    volumes:
+      - ./data:/app/data
+    networks:
+      - rag_network
+    profiles:
+      - tools
+
+  # ─── Pipeline: job one-time ────────────────────────────────────────────────
+  # Uso: docker compose --profile tools up pipeline
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uv run python scripts/run_pipeline.py
+    env_file:
+      - .env
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    networks:
+      - rag_network
+    profiles:
+      - tools
+
+volumes:
+  chroma_data:
+  chroma_data_local:
+
+networks:
+  rag_network:
+    driver: bridge

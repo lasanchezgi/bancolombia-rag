@@ -1,27 +1,33 @@
 FROM python:3.12-slim AS base
 
-WORKDIR /app
-
-# Instalar dependencias del sistema necesarias para httpx y beautifulsoup4
+# Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar uv como gestor de dependencias
+# Instalar uv
 RUN pip install uv
 
-# Copiar archivos de dependencias primero para aprovechar el cache de capas Docker
-COPY pyproject.toml uv.lock ./
+WORKDIR /app
 
-# Instalar dependencias de producción usando uv (frozen = reproducible)
-RUN uv sync --frozen
+# Copiar archivos de dependencias primero (cache de Docker)
+COPY pyproject.toml .
+COPY uv.lock* .
 
-# Copiar código fuente y scripts
+# Instalar dependencias de producción (reproducible, sin dev)
+RUN uv sync --frozen --no-dev
+
+# Copiar código fuente
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 
-# Hacer que los imports de src funcionen desde cualquier punto de entrada
+# Variables de entorno por defecto
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
-# Comando por defecto; cada servicio lo sobreescribe en docker-compose.yml
-CMD ["uv", "run", "python", "-m", "src.mcp_server.server"]
+# Crear directorios necesarios
+RUN mkdir -p data/raw data/processed .chroma .memory
+
+# Comando por defecto — cada servicio lo sobreescribe en docker-compose.yml
+CMD ["uv", "run", "streamlit", "run", "src/frontend/app.py", \
+     "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
