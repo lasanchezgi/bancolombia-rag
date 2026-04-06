@@ -1,54 +1,64 @@
 """
-Limpiador de texto que normaliza el contenido crudo extraído por el parser.
+Limpiador de texto que normaliza el contenido crudo extraído por el scraper.
 
-Aplica transformaciones encadenadas para eliminar espacios excesivos, artefactos
-HTML residuales y líneas no informativas (boilerplate), devolviendo texto limpio
-listo para ser fragmentado por el Chunker.
+Aplica regex para eliminar URLs, caracteres especiales no deseados y
+espacios/saltos de línea redundantes, devolviendo un dict enriquecido
+con los campos "clean_text" y "word_count" listos para el Chunker.
 """
 
 from __future__ import annotations
+
+import re
+from typing import Any
+
+_URL_RE = re.compile(r"https?://\S+")
+# Conserva: letras (incluyendo unicode/español), dígitos, espacios, puntuación básica
+_ALLOWED_CHARS_RE = re.compile(r"[^\w\s.,;:¿?¡!()\-%]")
+_MULTI_SPACE_RE = re.compile(r"[ \t]+")
+_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+
+_MIN_TEXT_LENGTH = 50
 
 
 class Cleaner:
     """Normaliza texto crudo proveniente del scraper.
 
-    Aplica las siguientes transformaciones en orden:
-    1. Eliminar artefactos HTML residuales (entidades, tags mal escapados).
-    2. Colapsar espacios en blanco y saltos de línea múltiples.
-    3. Eliminar líneas vacías o que solo contienen puntuación.
-    4. Strip de espacios al inicio y al final del texto.
+    Aplica las siguientes transformaciones en orden sobre el campo ``"text"``
+    del dict de entrada:
+
+    1. Eliminar URLs (``https?://...``).
+    2. Eliminar caracteres especiales fuera del conjunto permitido.
+    3. Colapsar múltiples espacios/tabs en uno solo.
+    4. Colapsar más de 2 saltos de línea consecutivos en exactamente 2.
+    5. Strip del resultado.
+    6. Descartar si el texto resultante tiene menos de 50 caracteres.
     """
 
-    def clean(self, text: str) -> str:
-        """Aplica todas las transformaciones de limpieza al texto.
+    def clean(self, page: dict[str, Any]) -> dict[str, Any] | None:
+        """Limpia el texto de una página cruda del scraper.
 
         Args:
-            text: Texto crudo extraído por el Parser.
+            page: Dict del scraper con al menos la clave ``"text"``.
 
         Returns:
-            Texto normalizado y listo para chunking. Si la entrada es
-            una cadena vacía, devuelve una cadena vacía.
+            Dict con los mismos campos originales más ``"clean_text"``
+            (texto limpio) y ``"word_count"`` (palabras en clean_text).
+            Devuelve ``None`` si el texto limpio tiene menos de 50 caracteres.
         """
-        raise NotImplementedError
+        text: str = page["text"]
 
-    def _collapse_whitespace(self, text: str) -> str:
-        """Colapsa secuencias de espacios/saltos de línea a un solo espacio.
+        # 1. Eliminar URLs
+        text = _URL_RE.sub("", text)
+        # 2. Eliminar caracteres especiales no permitidos
+        text = _ALLOWED_CHARS_RE.sub("", text)
+        # 3. Colapsar espacios y tabs múltiples
+        text = _MULTI_SPACE_RE.sub(" ", text)
+        # 4. Colapsar 3+ saltos de línea a exactamente 2
+        text = _MULTI_NEWLINE_RE.sub("\n\n", text)
+        # 5. Strip
+        text = text.strip()
 
-        Args:
-            text: Texto a procesar.
+        if len(text) < _MIN_TEXT_LENGTH:
+            return None
 
-        Returns:
-            Texto con espacios normalizados.
-        """
-        raise NotImplementedError
-
-    def _remove_html_artifacts(self, text: str) -> str:
-        """Elimina entidades HTML residuales (e.g. ``&nbsp;``, ``&amp;``).
-
-        Args:
-            text: Texto que puede contener entidades HTML sin decodificar.
-
-        Returns:
-            Texto con entidades HTML reemplazadas por sus equivalentes Unicode.
-        """
-        raise NotImplementedError
+        return {**page, "clean_text": text, "word_count": len(text.split())}

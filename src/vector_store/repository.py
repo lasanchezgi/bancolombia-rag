@@ -13,6 +13,7 @@ crear una subclase que implemente los cuatro métodos abstractos.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class VectorStoreRepository(ABC):
@@ -23,21 +24,14 @@ class VectorStoreRepository(ABC):
     """
 
     @abstractmethod
-    def add_documents(
-        self,
-        ids: list[str],
-        embeddings: list[list[float]],
-        documents: list[str],
-        metadatas: list[dict],
-    ) -> None:
+    def add_documents(self, chunks: list[dict[str, Any]]) -> None:
         """Inserta o actualiza documentos con sus embeddings en el store.
 
         Args:
-            ids: Identificadores únicos para cada documento.
-            embeddings: Vectores de embedding pre-computados.
-            documents: Texto plano de cada chunk.
-            metadatas: Lista de dicts con metadatos por documento
-                       (e.g. ``{"url": "...", "title": "..."}``).
+            chunks: Lista de dicts de chunks enriquecidos con el campo
+                    ``"embedding"`` (salida de ``Embedder.embed_chunks()``).
+                    Cada dict debe tener al menos: ``chunk_id``, ``text``,
+                    ``embedding``, y los metadatos relevantes.
         """
         ...
 
@@ -46,19 +40,19 @@ class VectorStoreRepository(ABC):
         self,
         query_embedding: list[float],
         top_k: int,
-    ) -> list[dict]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Recupera los documentos más similares a un vector de consulta.
 
         Args:
             query_embedding: Vector de embedding de la consulta del usuario.
             top_k: Número de resultados a devolver.
+            filters: Filtros de metadatos opcionales (e.g. ``{"category": "cuentas"}``).
 
         Returns:
             Lista de dicts ordenados por similitud descendente, cada uno con:
-            - ``id``: Identificador del documento.
-            - ``document``: Texto del chunk.
-            - ``metadata``: Dict con metadatos del documento.
-            - ``distance``: Distancia (menor = más similar).
+            ``chunk_id``, ``text``, ``url``, ``title``, ``category``,
+            ``score`` (1 - distancia coseno) y ``chunk_index``.
         """
         ...
 

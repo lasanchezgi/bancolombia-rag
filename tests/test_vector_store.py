@@ -7,6 +7,8 @@ en memoria, sin requerir una instancia real de ChromaDB.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from src.vector_store.repository import VectorStoreRepository
@@ -16,19 +18,13 @@ class _StubRepository(VectorStoreRepository):
     """Implementación mínima en memoria para verificar el contrato de la ABC."""
 
     def __init__(self) -> None:
-        self._docs: dict[str, dict] = {}
+        self._docs: dict[str, dict[str, Any]] = {}
 
-    def add_documents(
-        self,
-        ids: list[str],
-        embeddings: list[list[float]],
-        documents: list[str],
-        metadatas: list[dict],
-    ) -> None:
-        for doc_id, doc, meta in zip(ids, documents, metadatas):
-            self._docs[doc_id] = {"document": doc, "metadata": meta}
+    def add_documents(self, chunks: list[dict[str, Any]]) -> None:
+        for chunk in chunks:
+            self._docs[chunk["chunk_id"]] = chunk
 
-    def query(self, query_embedding: list[float], top_k: int) -> list[dict]:
+    def query(self, query_embedding: list[float], top_k: int, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return list(self._docs.values())[:top_k]
 
     def delete_collection(self) -> None:
@@ -59,12 +55,7 @@ class TestVectorStoreRepository:
     def test_add_documents_increments_count(self) -> None:
         """add_documents() debe incrementar el conteo de documentos."""
         repo = _StubRepository()
-        repo.add_documents(
-            ids=["doc-1"],
-            embeddings=[[0.1, 0.2]],
-            documents=["Texto de prueba"],
-            metadatas=[{"url": "https://example.com"}],
-        )
+        repo.add_documents([{"chunk_id": "doc-1", "text": "Texto de prueba", "url": "https://example.com"}])
         assert repo.count() == 1
 
     def test_query_returns_list(self) -> None:
@@ -76,6 +67,6 @@ class TestVectorStoreRepository:
     def test_delete_collection_empties_store(self) -> None:
         """delete_collection() debe dejar el repositorio vacío."""
         repo = _StubRepository()
-        repo.add_documents(["id-1"], [[0.1]], ["doc"], [{}])
+        repo.add_documents([{"chunk_id": "id-1", "text": "doc"}])
         repo.delete_collection()
         assert repo.count() == 0

@@ -1,85 +1,135 @@
 """
 Adaptador ChromaDB para VectorStoreRepository.
 
-Implementa el puerto VectorStoreRepository usando el cliente HTTP de ChromaDB,
-lo que permite conectar tanto a un servidor local como a uno dentro de Docker
-sin modificar el código de negocio. La conexión se configura a través de las
-variables de entorno CHROMA_HOST y CHROMA_PORT.
+Implementa el puerto VectorStoreRepository usando ChromaDB en modo dual:
+- ``host == "local"``: PersistentClient en ``.chroma/`` (desarrollo local).
+- Cualquier otro host: HttpClient para ChromaDB en Docker.
+
+La colección se crea con métrica coseno (``hnsw:space: cosine``) para que
+las distancias devueltas sean directamente 1 - similaridad.
 """
 
 from __future__ import annotations
 
-import os
+import logging
+from typing import Any
 
 import chromadb
 
 from .repository import VectorStoreRepository
 
+logger = logging.getLogger(__name__)
+
+_METADATA_KEYS = ("url", "title", "category", "subcategory", "extraction_date", "chunk_index", "total_chunks", "word_count")
+
 
 class ChromaRepository(VectorStoreRepository):
     """Implementación de VectorStoreRepository respaldada por ChromaDB.
 
-    Usa el HttpClient de ChromaDB para conectar a un servidor externo
-    (self-hosted), lo que garantiza compatibilidad con Docker Compose.
+    Soporta modo local (PersistentClient) y modo remoto (HttpClient).
 
     Attributes:
-        client: Cliente HTTP de ChromaDB.
-        collection: Colección activa dentro de ChromaDB.
+        collection_name: Nombre de la colección activa en ChromaDB.
+        client: Cliente ChromaDB (Persistent o HTTP).
+        collection: Colección ChromaDB activa.
     """
 
-    DEFAULT_COLLECTION = "bancolombia"
-
-    def __init__(self, collection_name: str = DEFAULT_COLLECTION) -> None:
+    def __init__(self, host: str, port: int, collection_name: str) -> None:
         """Inicializa la conexión a ChromaDB y obtiene/crea la colección.
 
-        La configuración de host y puerto se lee de las variables de entorno
-        ``CHROMA_HOST`` (default: ``localhost``) y ``CHROMA_PORT`` (default: ``8000``).
+        Args:
+            host: Host del servidor ChromaDB, o ``"local"`` para modo persistente.
+            port: Puerto del servidor ChromaDB (ignorado en modo local).
+            collection_name: Nombre de la colección a usar o crear.
+        """
+        self.collection_name = collection_name
+
+        if host == "local":
+            self.client = chromadb.PersistentClient(path=".chroma")
+            logger.info("ChromaDB: modo PersistentClient (path=.chroma)")
+        else:
+            self.client = chromadb.HttpClient(host=host, port=port)
+            logger.info("ChromaDB: modo HttpClient (%s:%d)", host, port)
+
+        self.collection = self.client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def add_documents(self, chunks: list[dict[str, Any]]) -> None:
+        """Upserta chunks enriquecidos con embeddings en la colección ChromaDB.
 
         Args:
-            collection_name: Nombre de la colección a usar o crear en ChromaDB.
+            chunks: Lista de dicts con al menos ``chunk_id``, ``text`` y
+                    ``embedding`` (salida de ``Embedder.embed_chunks()``).
         """
-        host = os.getenv("CHROMA_HOST", "localhost")
-        port = int(os.getenv("CHROMA_PORT", "8000"))
-        self.client = chromadb.HttpClient(host=host, port=port)
-        self.collection = self.client.get_or_create_collection(collection_name)
+        ids = [c["chunk_id"] for c in chunks]
+        embeddings = [c["embedding"] for c in chunks]
+        documents = [c["text"] for c in chunks]
+        metadatas = [
+            {k: c.get(k, "") for k in _METADATA_KEYS}
+            for c in chunks
+        ]
 
-    def add_documents(
+        self.collection.upsert(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+        logger.info("Upserted %d documents to ChromaDB collection '%s'", len(chunks), self.collection_name)
+
+    def query(
         self,
-        ids: list[str],
-        embeddings: list[list[float]],
-        documents: list[str],
-        metadatas: list[dict],
-    ) -> None:
-        """Upserta documentos en la colección ChromaDB.
-
-        Args:
-            ids: Identificadores únicos de los documentos.
-            embeddings: Vectores pre-computados.
-            documents: Texto plano de cada chunk.
-            metadatas: Metadatos por documento.
-        """
-        raise NotImplementedError
-
-    def query(self, query_embedding: list[float], top_k: int) -> list[dict]:
+        query_embedding: list[float],
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Consulta ChromaDB por vecinos más cercanos.
 
         Args:
-            query_embedding: Vector de la consulta del usuario.
+            query_embedding: Vector de la consulta.
             top_k: Número de resultados a retornar.
+            filters: Filtros de metadatos para ChromaDB ``where`` clause.
 
         Returns:
-            Lista de dicts con ``id``, ``document``, ``metadata``, ``distance``.
+            Lista de dicts con ``chunk_id``, ``text``, ``url``, ``title``,
+            ``category``, ``score`` (1 - distancia coseno) y ``chunk_index``.
         """
-        raise NotImplementedError
+        kwargs: dict[str, Any] = {
+            "query_embeddings": [query_embedding],
+            "n_results": top_k,
+        }
+        if filters:
+            kwargs["where"] = filters
+
+        results = self.collection.query(**kwargs)
+
+        output: list[dict[str, Any]] = []
+        ids = results.get("ids", [[]])[0]
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        for chunk_id, text, meta, distance in zip(ids, documents, metadatas, distances):
+            output.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": text,
+                    "url": meta.get("url", ""),
+                    "title": meta.get("title", ""),
+                    "category": meta.get("category", ""),
+                    "score": 1.0 - distance,
+                    "chunk_index": meta.get("chunk_index", 0),
+                }
+            )
+
+        return output
 
     def delete_collection(self) -> None:
         """Elimina la colección completa de ChromaDB."""
-        raise NotImplementedError
+        self.client.delete_collection(self.collection_name)
+        logger.info("Deleted ChromaDB collection '%s'", self.collection_name)
 
     def count(self) -> int:
-        """Retorna el número de documentos en la colección ChromaDB.
+        """Retorna el número de documentos en la colección.
 
         Returns:
             Conteo de documentos almacenados.
         """
-        raise NotImplementedError
+        return self.collection.count()
