@@ -18,9 +18,20 @@ from typing import Any
 from fastmcp import FastMCP
 
 from src.embeddings.embedder import Embedder
+from src.embeddings.reranker import Reranker
 from src.vector_store.chroma_repository import ChromaRepository
 
 logger = logging.getLogger(__name__)
+
+_reranker_instance: Reranker | None = None
+
+
+def get_reranker() -> Reranker:
+    """Retorna el singleton del Reranker, instanciándolo la primera vez."""
+    global _reranker_instance
+    if _reranker_instance is None:
+        _reranker_instance = Reranker()
+    return _reranker_instance
 
 
 def _get_repository() -> ChromaRepository:
@@ -45,7 +56,12 @@ def register_tools(mcp: FastMCP) -> None:
     """
 
     @mcp.tool  # type: ignore[misc]
-    def search_knowledge_base(query: str, top_k: int = 5, category: str | None = None) -> dict[str, Any]:
+    def search_knowledge_base(
+        query: str,
+        top_k: int = 5,
+        category: str | None = None,
+        use_reranking: bool = True,
+    ) -> dict[str, Any]:
         """Busca información sobre productos, servicios y contenido de Bancolombia en la base de conocimiento.
 
         Usa esta herramienta cuando el usuario pregunte sobre cuentas, tarjetas, créditos,
@@ -57,6 +73,9 @@ def register_tools(mcp: FastMCP) -> None:
             top_k: Número de resultados a retornar (default: 5, max: 10)
             category: Filtrar por categoría específica. Categorías disponibles: cuentas,
                       tarjetas-de-credito, tarjetas-debito, creditos, beneficios, giros, general. Opcional.
+            use_reranking: Si True (default), aplica reranking con Cross-Encoder tras recuperar candidatos de
+                           ChromaDB, mejorando la precisión a costa de ~200ms adicionales. Usar False para
+                           respuestas rápidas cuando la velocidad es prioritaria.
         """
         try:
             embedder = _get_embedder()
@@ -65,11 +84,25 @@ def register_tools(mcp: FastMCP) -> None:
             embeddings = embedder.embed_texts([query])
             query_embedding = embeddings[0]
 
+            n_candidates = top_k * 3 if use_reranking else top_k
             filters = {"category": {"$eq": category}} if category else None
-            results = repository.query(query_embedding=query_embedding, top_k=min(top_k, 10), filters=filters)
+            raw_results = repository.query(
+                query_embedding=query_embedding,
+                top_k=min(n_candidates, 30),
+                filters=filters,
+            )
 
-            if not results:
+            if not raw_results:
                 return {"results": [], "total": 0, "message": "No se encontró información relevante", "query": query}
+
+            if use_reranking:
+                results = get_reranker().rerank(query, raw_results, top_k)
+                retrieval_method = "chromadb+reranking"
+            else:
+                results = raw_results[:top_k]
+                for r in results:
+                    r["rerank_score"] = None
+                retrieval_method = "chromadb_only"
 
             return {
                 "results": [
@@ -80,6 +113,8 @@ def register_tools(mcp: FastMCP) -> None:
                         "category": r["category"],
                         "relevance_score": r["score"],
                         "chunk_index": r["chunk_index"],
+                        "rerank_score": r.get("rerank_score"),
+                        "retrieval_method": retrieval_method,
                     }
                     for r in results
                 ],

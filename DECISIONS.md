@@ -646,12 +646,22 @@ conscientemente y por qué.
 ### 1. Reranking con Cross-Encoder
 
 **Impacto:** Alto — mejora significativa en la calidad del retrieval
-**Estado:** No implementado por tiempo
-**Descripción:** Después de recuperar los top-k chunks por similitud coseno, aplicar un
-Cross-Encoder (ej. `cross-encoder/ms-marco-MiniLM-L-6-v2`) para reordenar los resultados
-por relevancia real al query. El retrieval bi-encoder actual es eficiente pero puede ordenar
+**Estado:** Aceptado - implementado (2026-04-06)
+**Descripción:** Después de recuperar los top-k chunks por similitud coseno, se aplica un
+Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`) para reordenar los resultados
+por relevancia real al query. El retrieval bi-encoder es eficiente pero puede ordenar
 incorrectamente chunks con alta similitud léxica pero baja relevancia semántica. El reranking
-añadiría ~200ms de latencia pero reduciría respuestas con fuentes incorrectas.
+añade ~200ms de latencia pero reduce respuestas con fuentes incorrectas.
+
+**Detalles de implementación:**
+
+- Modelo: `cross-encoder/ms-marco-MiniLM-L-6-v2` (22 MB, corre 100% local en CPU, sin API key)
+- Clase `Reranker` en `src/embeddings/reranker.py` — sigue el mismo patrón que `Embedder`
+- Singleton `get_reranker()` en `src/mcp_server/tools.py` — carga el modelo una sola vez (~2-3s)
+- Parámetro `use_reranking: bool = True` en `search_knowledge_base` — activo por defecto
+- Cuando `use_reranking=True`: ChromaDB recupera `top_k * 3` candidatos; el Cross-Encoder
+  reordena y retorna los mejores `top_k`. Cada resultado incluye `rerank_score` y `retrieval_method`
+- Fallback graceful: si el modelo falla, se retornan los resultados de ChromaDB sin reordenar
 
 ### 2. Actualización incremental de la Knowledge Base
 
