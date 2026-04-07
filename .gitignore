@@ -5,6 +5,9 @@
 # Usar glob (* no trailing slash) para que .gitkeep siga siendo rastreado
 data/raw/*
 data/processed/*
+data/conversations.db
+data/conversations.db-shm
+data/conversations.db-wal
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

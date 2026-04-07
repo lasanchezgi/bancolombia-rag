@@ -17,6 +17,8 @@ import json
 import logging
 import sys
 import threading
+import time
+import uuid
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -24,6 +26,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from openai import OpenAI
 
+from .conversation_logger import ConversationLogger
 from .memory import LongTermMemory, MidTermMemory, ShortTermMemory
 from .prompts import SYSTEM_PROMPT
 
@@ -132,6 +135,10 @@ class RAGAgent:
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._loop_thread.start()
+        self.logger = ConversationLogger()
+        self.session_id = str(uuid.uuid4())
+        self._last_sources: list[str] = []
+        self._last_top_score: float | None = None
 
     # ──────────────────────────────────────────────────────────────────────
     # MCP session management
@@ -195,61 +202,93 @@ class RAGAgent:
         Returns:
             Respuesta final del asistente como string.
         """
-        self.short_term.add_message("user", user_message)
+        t0 = time.time()
+        _final_response: str = ""
+        _error: str | None = None
 
-        if len(self.short_term.get_messages()) > _MID_TERM_THRESHOLD:
-            self.mid_term.update_summary(self.short_term.get_messages(), self.client)
+        try:
+            self.short_term.add_message("user", user_message)
 
-        messages: list[dict[str, Any]] = list(self.short_term.get_messages())
+            if len(self.short_term.get_messages()) > _MID_TERM_THRESHOLD:
+                self.mid_term.update_summary(self.short_term.get_messages(), self.client)
 
-        # Inyectar resumen de mid-term como contexto adicional si existe
-        summary = self.mid_term.get_summary()
-        if summary:
-            messages = (
-                [messages[0]]
-                + [{"role": "system", "content": f"Resumen de la conversación hasta ahora: {summary}"}]
-                + messages[1:]
+            messages: list[dict[str, Any]] = list(self.short_term.get_messages())
+
+            # Inyectar resumen de mid-term como contexto adicional si existe
+            summary = self.mid_term.get_summary()
+            if summary:
+                messages = (
+                    [messages[0]]
+                    + [{"role": "system", "content": f"Resumen de la conversación hasta ahora: {summary}"}]
+                    + messages[1:]
+                )
+
+            while True:
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,  # type: ignore[arg-type]
+                    tools=self.TOOLS,  # type: ignore[arg-type]
+                    tool_choice="auto",
+                )
+                choice = response.choices[0]
+                assistant_message = choice.message
+
+                if choice.finish_reason == "tool_calls" and assistant_message.tool_calls:
+                    # Agregar mensaje del asistente con tool_calls al historial temporal
+                    messages.append(assistant_message.model_dump(exclude_unset=False))
+
+                    for tool_call in assistant_message.tool_calls:
+                        tool_name: str = tool_call.function.name  # type: ignore[union-attr]
+                        try:
+                            tool_args = json.loads(tool_call.function.arguments)  # type: ignore[union-attr]
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        tool_result = await self._call_mcp_tool(tool_name, tool_args)
+
+                        if tool_name == "search_knowledge_base":
+                            results = tool_result.get("results", [])
+                            self._last_sources = [r["url"] for r in results if "url" in r]
+                            if results:
+                                self._last_top_score = results[0].get("score")
+
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(tool_result, ensure_ascii=False),
+                            }
+                        )
+
+                elif choice.finish_reason == "stop":
+                    _final_response = assistant_message.content or ""
+                    self.short_term.add_message("assistant", _final_response)
+                    self.long_term.update_from_conversation(self.short_term.get_messages())
+                    break
+
+                else:
+                    # Finish reason inesperado (content_filter, length, etc.)
+                    _final_response = assistant_message.content or "No pude generar una respuesta."
+                    break
+
+            return _final_response
+
+        except Exception as exc:
+            _error = str(exc)
+            raise
+
+        finally:
+            self.logger.log_interaction(
+                session_id=self.session_id,
+                question=user_message,
+                answer=_final_response,
+                sources=self._last_sources,
+                top_score=self._last_top_score,
+                response_ms=int((time.time() - t0) * 1000),
+                error=_error,
             )
-
-        while True:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,  # type: ignore[arg-type]
-                tools=self.TOOLS,  # type: ignore[arg-type]
-                tool_choice="auto",
-            )
-            choice = response.choices[0]
-            assistant_message = choice.message
-
-            if choice.finish_reason == "tool_calls" and assistant_message.tool_calls:
-                # Agregar mensaje del asistente con tool_calls al historial temporal
-                messages.append(assistant_message.model_dump(exclude_unset=False))
-
-                for tool_call in assistant_message.tool_calls:
-                    tool_name: str = tool_call.function.name  # type: ignore[union-attr]
-                    try:
-                        tool_args = json.loads(tool_call.function.arguments)  # type: ignore[union-attr]
-                    except json.JSONDecodeError:
-                        tool_args = {}
-
-                    tool_result = await self._call_mcp_tool(tool_name, tool_args)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(tool_result, ensure_ascii=False),
-                        }
-                    )
-
-            elif choice.finish_reason == "stop":
-                final_text = assistant_message.content or ""
-                self.short_term.add_message("assistant", final_text)
-                self.long_term.update_from_conversation(self.short_term.get_messages())
-                return final_text
-
-            else:
-                # Finish reason inesperado (content_filter, length, etc.)
-                return assistant_message.content or "No pude generar una respuesta."
+            self._last_sources = []
+            self._last_top_score = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
