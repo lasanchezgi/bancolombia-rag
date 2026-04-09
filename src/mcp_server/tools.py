@@ -14,6 +14,7 @@ import logging
 import os
 import time
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
@@ -40,7 +41,10 @@ def _get_repository() -> ChromaRepository:
     host = os.getenv("CHROMA_HOST", "local")
     port = int(os.getenv("CHROMA_PORT", "8000"))
     collection = os.getenv("CHROMA_COLLECTION", "bancolombia_kb")
-    return ChromaRepository(host=host, port=port, collection_name=collection)
+    # Resolve .chroma relative to project root (parents[2] = src/mcp_server/tools.py -> root)
+    project_root = Path(__file__).resolve().parents[2]
+    chroma_path = os.getenv("CHROMA_PATH", str(project_root / ".chroma"))
+    return ChromaRepository(host=host, port=port, collection_name=collection, path=chroma_path)
 
 
 def _get_embedder() -> Embedder:
