@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections import Counter
 from typing import Any
 
@@ -78,6 +79,7 @@ def register_tools(mcp: FastMCP) -> None:
                            respuestas rápidas cuando la velocidad es prioritaria.
         """
         try:
+            t_start = time.time()
             embedder = _get_embedder()
             repository = _get_repository()
 
@@ -92,8 +94,27 @@ def register_tools(mcp: FastMCP) -> None:
                 filters=filters,
             )
 
+            t_after_retrieval = time.time()
+            retrieval_ms = int((t_after_retrieval - t_start) * 1000)
+            top_chromadb_score: float | None = raw_results[0]["score"] if raw_results else None
+
             if not raw_results:
-                return {"results": [], "total": 0, "message": "No se encontró información relevante", "query": query}
+                return {
+                    "results": [],
+                    "total": 0,
+                    "message": "No se encontró información relevante",
+                    "query": query,
+                    "_trace": {
+                        "chunks_retrieved": 0,
+                        "chunks_after_rerank": 0,
+                        "top_chromadb_score": None,
+                        "top_rerank_score": None,
+                        "retrieval_ms": retrieval_ms,
+                        "reranking_ms": 0,
+                        "use_reranking": use_reranking,
+                        "category_filter": category,
+                    },
+                }
 
             if use_reranking:
                 results = get_reranker().rerank(query, raw_results, top_k)
@@ -103,6 +124,10 @@ def register_tools(mcp: FastMCP) -> None:
                 for r in results:
                     r["rerank_score"] = None
                 retrieval_method = "chromadb_only"
+
+            t_after_rerank = time.time()
+            reranking_ms = int((t_after_rerank - t_after_retrieval) * 1000)
+            top_rerank_score: float | None = results[0].get("rerank_score") if (use_reranking and results) else None
 
             return {
                 "results": [
@@ -120,6 +145,16 @@ def register_tools(mcp: FastMCP) -> None:
                 ],
                 "total": len(results),
                 "query": query,
+                "_trace": {
+                    "chunks_retrieved": len(raw_results),
+                    "chunks_after_rerank": len(results),
+                    "top_chromadb_score": top_chromadb_score,
+                    "top_rerank_score": top_rerank_score,
+                    "retrieval_ms": retrieval_ms,
+                    "reranking_ms": reranking_ms,
+                    "use_reranking": use_reranking,
+                    "category_filter": category,
+                },
             }
         except Exception as exc:  # noqa: BLE001
             logger.error("Error en search_knowledge_base: %s", exc)

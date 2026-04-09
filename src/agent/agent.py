@@ -139,6 +139,8 @@ class RAGAgent:
         self.session_id = str(uuid.uuid4())
         self._last_sources: list[str] = []
         self._last_top_score: float | None = None
+        self._pending_mcp_call_ids: list[int] = []
+        self._last_mcp_call_id: int = -1
 
     # ──────────────────────────────────────────────────────────────────────
     # MCP session management
@@ -247,10 +249,38 @@ class RAGAgent:
                         tool_result = await self._call_mcp_tool(tool_name, tool_args)
 
                         if tool_name == "search_knowledge_base":
+                            trace = tool_result.pop("_trace", {})
                             results = tool_result.get("results", [])
                             self._last_sources = [r["url"] for r in results if "url" in r]
                             if results:
-                                self._last_top_score = results[0].get("score")
+                                self._last_top_score = results[0].get("relevance_score") or results[0].get("score")
+                            mcp_id = self.logger.log_mcp_call(
+                                session_id=self.session_id,
+                                tool_name="search_knowledge_base",
+                                query_sent=tool_args.get("query"),
+                                category_filter=tool_args.get("category"),
+                                use_reranking=tool_args.get("use_reranking", True),
+                                chunks_retrieved=trace.get("chunks_retrieved", 0),
+                                chunks_after_rerank=trace.get("chunks_after_rerank", 0),
+                                top_chromadb_score=trace.get("top_chromadb_score"),
+                                top_rerank_score=trace.get("top_rerank_score"),
+                                urls_returned=[r["url"] for r in results if "url" in r],
+                                titles_returned=[r["title"] for r in results if "title" in r],
+                                retrieval_ms=trace.get("retrieval_ms", 0),
+                                reranking_ms=trace.get("reranking_ms", 0),
+                                total_ms=trace.get("retrieval_ms", 0) + trace.get("reranking_ms", 0),
+                            )
+                            self._last_mcp_call_id = mcp_id
+                            self._pending_mcp_call_ids.append(mcp_id)
+
+                        elif tool_name == "get_article_by_url":
+                            mcp_id = self.logger.log_mcp_call(
+                                session_id=self.session_id,
+                                tool_name="get_article_by_url",
+                                query_sent=tool_args.get("url"),
+                                urls_returned=[tool_args["url"]] if tool_args.get("url") else [],
+                            )
+                            self._pending_mcp_call_ids.append(mcp_id)
 
                         messages.append(
                             {
@@ -278,7 +308,7 @@ class RAGAgent:
             raise
 
         finally:
-            self.logger.log_interaction(
+            conversation_id = self.logger.log_interaction(
                 session_id=self.session_id,
                 question=user_message,
                 answer=_final_response,
@@ -287,8 +317,11 @@ class RAGAgent:
                 response_ms=int((time.time() - t0) * 1000),
                 error=_error,
             )
+            if conversation_id > 0 and self._pending_mcp_call_ids:
+                self.logger._link_mcp_calls_to_conversation(self._pending_mcp_call_ids, conversation_id)  # noqa: SLF001
             self._last_sources = []
             self._last_top_score = None
+            self._pending_mcp_call_ids = []
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
