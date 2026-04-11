@@ -4,7 +4,7 @@
 [![CI](https://github.com/lasanchezgi/bancolombia-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/lasanchezgi/bancolombia-rag/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastMCP](https://img.shields.io/badge/FastMCP-3.2-orange)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-1.5-green)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-0.6.3-green)
 
 ---
 
@@ -39,9 +39,12 @@ cualquier cliente MCP compatible — incluyendo Claude Desktop.
 4. **MCP Server** — expone 3 tools y 1 resource via FastMCP
    con transporte stdio (obligatorio) y SSE (externo)
 5. **RAGAgent** — agentic loop con `gpt-4o-mini`, 3 tipos de
-   memoria y cliente MCP via subprocess stdio
+   memoria, cliente MCP via subprocess stdio, y Cross-Encoder
+   reranking de los candidatos recuperados
 6. **Streamlit** — interfaz de chat con citación de fuentes,
-   historial y sidebar informativo
+   historial y sidebar informativo; más dos páginas protegidas:
+   **Monitoreo** (métricas operacionales, trazabilidad MCP,
+   gaps de KB) y **Evaluación** (faithfulness + factualidad)
 
 ---
 
@@ -53,11 +56,13 @@ cualquier cliente MCP compatible — incluyendo Claude Desktop.
 | Gestor de deps | uv | Más rápido que pip/poetry, lock file nativo |
 | Scraping | httpx + BeautifulSoup | Sitio server-side rendered, no requiere JS |
 | Embeddings | text-embedding-3-small | Mejor calidad/costo en español, 1536d |
-| Vector DB | ChromaDB self-hosted | Sin costo para evaluador, modo dual local/http |
+| Reranking | cross-encoder/ms-marco-MiniLM-L-6-v2 | Reordena candidatos ChromaDB por relevancia real, 22 MB local |
+| Vector DB | ChromaDB 0.6.3 self-hosted | Sin costo para evaluador, modo dual local/http |
 | MCP Server | FastMCP 3.2 | SDK oficial Python para MCP, stdio + SSE |
 | LLM | gpt-4o-mini | Rápido, económico, calidad suficiente |
 | Agente | OpenAI SDK nativo | Sin frameworks, loop transparente y explicable |
-| Frontend | Streamlit | Aceptado explícitamente, rápido de implementar |
+| Logging | SQLite (`ConversationLogger`) | Persistencia de conversaciones sin servicios externos |
+| Frontend | Streamlit multi-page | Chat + Monitoreo + Evaluación en un mismo proceso |
 | CI/CD | GitHub Actions | Integrado con el repo, gratuito |
 | Contenedores | Docker + Compose | Despliegue reproducible en EC2 |
 
@@ -117,6 +122,8 @@ uv run streamlit run src/frontend/app.py
 | `MAX_PAGES` | Máximo de páginas a scrapear | `80` |
 | `CHUNK_SIZE` | Tamaño de chunk en palabras | `500` |
 | `CHUNK_OVERLAP` | Overlap entre chunks en palabras | `50` |
+| `MONITORING_PASSWORD` | Contraseña del dashboard de monitoreo y evaluación | `bancolombia2026` |
+| `CONVERSATIONS_DB_PATH` | Path al SQLite de conversaciones | `data/conversations.db` |
 
 ---
 
@@ -150,7 +157,11 @@ docker-compose --profile tools up pipeline
 ```text
 docker-compose
 ├── chromadb     — base vectorial persistida en volumen
+│                  (healthcheck: GET /api/v1/heartbeat)
 └── frontend     — Streamlit + RAGAgent + MCP Server
+    ├── /          Chat principal
+    ├── /Monitoreo  Dashboard operacional (requiere MONITORING_PASSWORD)
+    └── /Evaluacion Métricas faithfulness y factualidad
                   (el MCP Server corre como subprocess stdio
                    dentro del contenedor frontend)
 ```
@@ -241,11 +252,44 @@ candidato puede explicar cada línea en la entrevista técnica.
 | Mediano plazo | `MidTermMemory` — resumen automático a 15+ msgs | Contexto sin saturar la ventana |
 | Largo plazo | `LongTermMemory` — JSON persistido en `.memory/` | Preferencias entre sesiones |
 
+### 8. Reranking: Cross-Encoder sobre candidatos bi-encoder
+
+Después de recuperar los top-k chunks por similitud coseno en
+ChromaDB, un Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`,
+22 MB) reordena los resultados por relevancia real al query.
+El bi-encoder es eficiente pero puede rankear incorrectamente
+chunks con alta similitud léxica y baja relevancia semántica.
+El reranker añade ~200 ms de latencia a cambio de respuestas
+más precisas. Se recuperan `top_k * 3` candidatos y se
+devuelven los mejores `top_k` tras el reranking.
+
+### 9. Observabilidad: logging SQLite + dashboard Streamlit
+
+`ConversationLogger` (`src/agent/conversation_logger.py`)
+persiste cada interacción en `data/conversations.db` (SQLite):
+pregunta, respuesta, herramientas MCP usadas, scores de
+retrieval y latencia. El dashboard de monitoreo
+(`pages/monitoring.py`) consume estas tablas para mostrar
+métricas en tiempo real, trazabilidad granular de llamadas MCP
+y gaps de la base de conocimiento. Acceso protegido con
+`MONITORING_PASSWORD`.
+
+### 10. Evaluación formal: LLM-as-a-judge
+
+El notebook `notebooks/rag_evaluation.ipynb` evalúa el sistema
+con 20 preguntas representativas y dos métricas:
+**faithfulness** (afirmaciones verificables en los chunks
+recuperados) y **factuality** (corrección vs respuestas de
+referencia). Cada pregunta se evalúa con y sin reranking para
+cuantificar el impacto. Los resultados se persisten en
+`data/eval_results.json` y se visualizan en
+`pages/evaluation.py`.
+
 ---
 
 ## Limitaciones conocidas
 
-- El scraper cubre las primeras 50 URLs del sitemap
+- El scraper cubre las primeras 80 URLs del sitemap
   (de 473 disponibles). Escalar es trivial: `MAX_PAGES=473`
 - El contenido no se actualiza automáticamente; requiere
   re-ejecutar el scraper y pipeline manualmente
@@ -272,7 +316,7 @@ uv run black --check src/ tests/
 ```
 
 GitHub Actions corre automáticamente en cada push a `main`:
-`ruff → black → pytest (94 tests)`
+`ruff → black → pytest (140 tests)`
 
 ---
 
@@ -283,16 +327,24 @@ bancolombia-rag/
 ├── src/
 │   ├── scraper/          # Crawler, parser y storage
 │   ├── pipeline/         # Cleaner y chunker
-│   ├── embeddings/       # Embedder con OpenAI
+│   ├── embeddings/       # Embedder con OpenAI + Reranker (cross-encoder)
 │   ├── vector_store/     # ABC + ChromaDB adapter
 │   ├── mcp_server/       # FastMCP server + tools
-│   ├── agent/            # RAGAgent + memoria + prompts
-│   └── frontend/         # Streamlit chat UI
-├── tests/                # 94 tests unitarios
+│   ├── agent/            # RAGAgent + memoria + prompts + ConversationLogger
+│   └── frontend/
+│       ├── app.py        # Chat principal
+│       └── pages/
+│           ├── monitoring.py   # Dashboard operacional (protegido)
+│           └── evaluation.py  # Métricas faithfulness/factualidad (protegido)
+├── notebooks/
+│   └── rag_evaluation.ipynb   # Pipeline de evaluación formal
+├── tests/                # 140 tests unitarios
 ├── scripts/              # run_scraper.py, run_pipeline.py
 ├── data/
+│   ├── eval_results.json # Resultados de evaluación (estático, en imagen Docker)
 │   └── raw/              # JSONs scrapeados (gitignored)
 ├── .github/workflows/    # ci.yml
+├── .dockerignore
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml

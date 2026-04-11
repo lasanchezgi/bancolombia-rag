@@ -637,6 +637,242 @@ Para el tamaño actual del proyecto, el beneficio justifica el costo.
 
 ---
 
+## ADR-013: Logging de conversaciones — ConversationLogger con SQLite
+
+**Estado:** Aceptado
+**Fecha:** Abril 2026
+
+**Contexto:**
+Para poder monitorear la calidad del sistema RAG en producción, identificar gaps en la
+base de conocimiento, y auditar el comportamiento del agente, necesitábamos persistir cada
+interacción (pregunta, respuesta, chunks recuperados, scores, tiempos de latencia, llamadas
+MCP). Esta trazabilidad es indispensable para detectar preguntas fuera de scope, herramientas
+que fallan, o respuestas de baja calidad sin tener que reproducir las sesiones manualmente.
+
+**Decisión:**
+`ConversationLogger` en `src/agent/conversation_logger.py` usando SQLite como backend de
+persistencia. El logger registra en `data/conversations.db` (montado como volumen en Docker):
+
+- **Tabla `conversations`**: `session_id`, `question`, `response`, `tools_used` (JSON),
+  `retrieval_scores` (JSON), `latency_ms`, `error` (si aplica), `timestamp`
+- **Tabla `mcp_calls`**: `call_id`, `tool_name`, `arguments` (JSON), `result_preview`,
+  `latency_ms`, `success`, `timestamp` — para trazabilidad granular de cada herramienta MCP
+
+El agente (`src/agent/agent.py`) instancia el logger al inicio y registra cada interacción
+al finalizar el loop agentic. El dashboard de monitoreo consume directamente estas tablas
+para renderizar métricas en tiempo real.
+
+**Alternativas consideradas:**
+
+- **Logging a fichero de texto**: Simple pero no consultable. Para analizar patrones (ej.
+  "¿qué categorías tienen más preguntas fallidas?") se requiere parsear texto, no SQL.
+  Descartado en favor de SQLite que permite queries ad-hoc directamente.
+- **Redis con TTL**: Cache de conversaciones recientes con expiración automática. Descartado
+  porque añade un servicio al Compose sin ventaja: SQLite en disco es suficiente para el
+  volumen de una demo y persiste indefinidamente sin configuración adicional.
+- **PostgreSQL / RDS**: Base de datos relacional completa. Descartado por sobredimensionamiento
+  para un sistema de usuario único. El docstring de `ConversationLogger` documenta
+  explícitamente que la migración a PostgreSQL es el path de producción.
+- **OpenTelemetry / Datadog / Prometheus**: Observabilidad de nivel producción. Descartado
+  por complejidad de setup y costo. SQLite local ofrece el 80% del valor con el 5% del
+  esfuerzo para el scope del proyecto.
+
+**Consecuencias:**
+El `data/conversations.db` persiste entre reinicios via el volumen `./data:/app/data` del
+Compose. El dashboard de monitoreo puede mostrar métricas históricas completas sin latencia
+adicional (reads locales). Los tests de `ConversationLogger` usan `db_path=":memory:"` para
+no generar ficheros en CI.
+
+**Trade-offs aceptados:**
+SQLite no soporta escrituras concurrentes desde múltiples instancias. En un despliegue
+multi-instancia (múltiples réplicas del frontend) se produciría contención en escritura.
+Para el caso de un único contenedor frontend (la arquitectura actual), SQLite es correcto.
+La migración a PostgreSQL/RDS requiere cambiar solo este adaptador sin tocar el agente.
+
+---
+
+## ADR-014: Observabilidad operacional — Dashboard de monitoreo con autenticación
+
+**Estado:** Aceptado
+**Fecha:** Abril 2026
+
+**Contexto:**
+Un sistema RAG en producción necesita visibilidad sobre: calidad del retrieval por categoría,
+preguntas que el sistema no puede responder (gaps de KB), historial de conversaciones para
+auditoría, y trazabilidad de las llamadas a herramientas MCP. Esta información es sensible
+(incluye conversaciones de usuarios) y no debe ser pública. La solución debía integrarse
+sin añadir infraestructura nueva.
+
+**Decisión:**
+Página Streamlit `src/frontend/pages/monitoring.py` con autenticación por contraseña.
+Streamlit detecta automáticamente los archivos en `pages/` y los añade a la navegación
+del sidebar sin configuración adicional. La autenticación usa `st.session_state` con
+contraseña configurable via `MONITORING_PASSWORD` (variable de entorno, con default
+`bancolombia2026`). Si la contraseña es incorrecta, `st.stop()` impide renderizar el
+dashboard.
+
+El dashboard expone cuatro secciones:
+
+1. **Métricas de sesiones**: total de conversaciones, latencia promedio, tasa de error
+2. **Trazabilidad MCP**: detalle de cada llamada a herramienta (tool, argumentos, latencia,
+   éxito/fallo) consultable por sesión
+3. **Gaps de KB**: preguntas con score de similitud bajo (retrieval fallido)
+4. **Historial reciente**: últimas N conversaciones con expansión de detalles
+
+**Alternativas consideradas:**
+
+- **Grafana + Prometheus**: Stack de observabilidad estándar en producción. Descartado por
+  complejidad de configuración (exporters, dashboards, servicios adicionales en Compose) y
+  costo de setup desproporcionado para el scope del proyecto.
+- **Página separada con servidor Flask**: Separar el dashboard en su propio servicio.
+  Descartado porque añade un servicio al Compose sin beneficio: Streamlit multi-page maneja
+  la separación de forma nativa y con el mismo proceso.
+- **Autenticación con OAuth / JWT**: Sistema de autenticación robusto. Descartado por
+  complejidad innecesaria para una demo con un único usuario evaluador. La contraseña en
+  variable de entorno es suficiente para proteger datos que no son de producción real.
+
+**Consecuencias:**
+El evaluador puede acceder al dashboard en la misma URL del frontend (`:8501`), navegando
+al item "Monitoreo" en el sidebar. La variable `MONITORING_PASSWORD` está configurada en
+`docker-compose.yml` con default explícito. No se añade ningún servicio nuevo al Compose.
+
+**Trade-offs aceptados:**
+La autenticación basada en `st.session_state` no es persistente entre pestañas del navegador:
+el usuario debe re-autenticarse si abre el dashboard en una nueva pestaña. Es un trade-off
+aceptable para simplificar la implementación. En producción real se usaría Streamlit
+Community Cloud auth o un reverse proxy con autenticación básica.
+
+---
+
+## ADR-015: Evaluación formal — métricas de faithfulness y factualidad
+
+**Estado:** Aceptado
+**Fecha:** Abril 2026
+
+**Contexto:**
+El enunciado del proyecto requiere demostrar que el sistema RAG produce respuestas correctas
+y verificables. Necesitábamos una metodología de evaluación rigurosa que midiera dos
+dimensiones clave: (1) **faithfulness** — si las respuestas están ancladas en los chunks
+recuperados, sin inventar información; y (2) **factuality** — si las respuestas son
+factualmante correctas respecto a la documentación de Bancolombia. Adicionalmente, queríamos
+comparar cuantitativamente el impacto del Cross-Encoder reranking (ADR implícito en sección
+de mejoras futuras implementadas) sobre estas métricas.
+
+**Decisión:**
+Pipeline de evaluación implementado en `notebooks/rag_evaluation.ipynb`:
+
+- **Dataset de evaluación**: 20 preguntas representativas sobre productos de Bancolombia,
+  con respuestas de referencia escritas manualmente a partir de la documentación oficial.
+- **Métricas evaluadas**:
+  - `faithfulness_score`: fracción de afirmaciones en la respuesta verificables en los
+    chunks recuperados (evaluado por `gpt-4o-mini` como juez)
+  - `factuality_score`: corrección factual de la respuesta vs la respuesta de referencia
+    (evaluado por `gpt-4o-mini` como juez LLM-as-a-judge)
+- **Comparación A/B**: cada pregunta se evalúa dos veces — pipeline base (sin reranking)
+  y pipeline con Cross-Encoder — para cuantificar el impacto del reranking.
+- **Resultados persistidos** en `data/eval_results.json`, leídos por
+  `src/frontend/pages/evaluation.py` para visualización en el dashboard.
+
+La página de evaluación Streamlit muestra los resultados con gráficos de barras
+comparativos, tabla detallada por pregunta, y resumen estadístico (media, mediana, p10/p90).
+Acceso protegido con la misma contraseña que el dashboard de monitoreo (`MONITORING_PASSWORD`).
+
+**Alternativas consideradas:**
+
+- **RAGAS framework**: Librería especializada para evaluación de RAG (faithfulness, answer
+  relevancy, context precision). Descartado porque añade una dependencia pesada para el
+  Dockerfile de producción y requiere configuración adicional. El LLM-as-a-judge con
+  `gpt-4o-mini` produce métricas equivalentes con código completamente auditable.
+- **Evaluación humana manual (human-in-the-loop)**: Revisión manual de cada respuesta.
+  Descartado por no ser escalable ni reproducible. El LLM-as-a-judge permite re-evaluar
+  automáticamente si el sistema cambia.
+- **Métricas de texto clásicas (BLEU, ROUGE)**: Comparación léxica vs respuestas de
+  referencia. Descartado porque BLEU/ROUGE penalizan respuestas correctas con diferente
+  vocabulario. Para respuestas en lenguaje natural, LLM-as-a-judge captura mejor la
+  equivalencia semántica.
+
+**Consecuencias:**
+Los resultados de evaluación (`data/eval_results.json`) son archivos estáticos en el
+repositorio, actualizados manualmente al re-ejecutar el notebook. El Dockerfile copia
+este archivo en la imagen (`COPY data/eval_results.json ./data/`) para que la página
+de evaluación funcione sin montar volúmenes adicionales. Si el pipeline cambia, el
+notebook debe re-ejecutarse y el JSON actualizado antes del próximo build Docker.
+
+**Trade-offs aceptados:**
+La evaluación es un snapshot estático, no continua. Si el sistema cambia (nuevo modelo,
+nuevos chunks, nuevo reranker), los resultados del JSON pueden quedar desactualizados
+hasta que alguien re-ejecute el notebook manualmente. En producción real se integraría
+la evaluación en el CI/CD como job periódico. Para el scope del proyecto, la evaluación
+manual con resultados versionados en el repositorio es suficiente.
+
+---
+
+## ADR-016: Seguridad de contenedores — imagen non-root y .dockerignore
+
+**Estado:** Aceptado
+**Fecha:** Abril 2026
+
+**Contexto:**
+Por defecto, los contenedores Docker ejecutan procesos como `root` (UID 0), lo cual viola
+el principio de mínimo privilegio. Si el proceso del contenedor es comprometido, el
+atacante tiene privilegios de root dentro del contenedor y potencialmente en el host
+(según la configuración del daemon Docker). Para el despliegue en EC2 (ADR-010), correr
+como root no es aceptable. Adicionalmente, sin `.dockerignore`, el contexto de build
+incluye el fichero `.env` (con claves de API), el directorio `.git`, y cientos de
+ficheros de desarrollo que no pertenecen a la imagen de producción.
+
+**Decisión:**
+Dos medidas de seguridad aplicadas en el `Dockerfile`:
+
+**1. Usuario non-root (`appuser`):**
+
+```dockerfile
+RUN addgroup --system appgroup \
+    && adduser --system --ingroup appgroup --no-create-home appuser \
+    && chown -R appuser:appgroup /app
+USER appuser
+```
+
+El proceso Streamlit y el subproceso MCP se ejecutan con `appuser` (UID sin shell, sin
+home directory). Crea directorios necesarios (`data/`, `.chroma/`, `.memory/`) antes del
+cambio de usuario para garantizar los permisos correctos.
+
+**2. Fichero `.dockerignore`:**
+
+Excluye del contexto de build:
+
+- `.env`, `.env.*` — claves de API nunca deben entrar a la imagen
+- `.git/`, `.gitignore` — historial de control de versiones irrelevante en producción
+- `notebooks/`, `tests/`, `.venv/` — artefactos de desarrollo
+- `data/raw/`, `data/processed/`, `data/conversations.db` — datos generados en runtime
+  (montados como volúmenes en producción, no embebidos en la imagen)
+- `**/__pycache__`, `**/*.pyc` — bytecode Python compilado
+- `.chroma/`, `.memory/` — estados locales de desarrollo
+
+**Alternativas consideradas:**
+
+- **`USER root` con capacidades restringidas (seccomp profiles)**: Limitar syscalls sin
+  cambiar el UID. Más complejo de configurar y no elimina el riesgo de escalada de
+  privilegios. Descartado en favor del enfoque más simple y estándar.
+- **Imagen distroless**: Imagen mínima sin shell, sin package manager. Mayor reducción de
+  superficie de ataque. Descartado porque `uv` requiere un entorno Python estándar que
+  distroless no proporciona fácilmente.
+
+**Consecuencias:**
+El scanner de vulnerabilidades del IDE dejó de reportar CVEs de alta severidad tras fijar
+la imagen base a `python:3.12.10-slim-bookworm` (versión de patch específica). El contexto
+de build se redujo significativamente al excluir directorios de datos y desarrollo. El
+fichero `.env` ya no puede entrar accidentalmente a la imagen aunque alguien olvide añadirlo
+al `.gitignore`.
+
+**Trade-offs aceptados:**
+El usuario `appuser` no puede instalar paquetes adicionales en tiempo de ejecución (sin
+`sudo`, sin acceso a `apt`). Esto es intencional: la imagen debe ser inmutable. Si se
+necesita depurar en producción, se puede usar `docker exec --user root` con privilegios
+explícitos temporales.
+
+---
+
 ## Mejoras futuras identificadas
 
 Estas mejoras fueron identificadas durante el desarrollo pero no implementadas en la versión
@@ -694,9 +930,8 @@ colecciones distribuidas y mejor rendimiento de escritura en paralelo. La abstra
 ### 5. Knowledge Base Coverage Dashboard
 
 **Impacto:** Medio — observabilidad del sistema RAG
-**Estado:** No implementado por tiempo
-**Descripción:** Un dashboard que muestre qué categorías tienen más chunks, qué URLs tienen
-menos cobertura, y qué preguntas frecuentes no encuentran chunks relevantes (baja puntuación
-de similitud en todas las respuestas). Permitiría identificar gaps en la KB y priorizar qué
-páginas rescrapear o enriquecer. Implementable con Streamlit como segunda página del frontend
-usando los metadatos ya almacenados en ChromaDB.
+**Estado:** Implementado — cubierto por el Dashboard de Monitoreo (ver ADR-014)
+**Descripción:** El dashboard de monitoreo (`src/frontend/pages/monitoring.py`) implementa
+esta funcionalidad: muestra métricas de cobertura por categoría, gaps de KB (preguntas con
+score de similitud bajo), historial de conversaciones y trazabilidad de llamadas MCP.
+Acceso protegido con contraseña via `MONITORING_PASSWORD`.
