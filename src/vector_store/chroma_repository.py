@@ -43,19 +43,20 @@ class ChromaRepository(VectorStoreRepository):
         collection: Colección ChromaDB activa.
     """
 
-    def __init__(self, host: str, port: int, collection_name: str) -> None:
+    def __init__(self, host: str, port: int, collection_name: str, path: str = ".chroma") -> None:
         """Inicializa la conexión a ChromaDB y obtiene/crea la colección.
 
         Args:
             host: Host del servidor ChromaDB, o ``"local"`` para modo persistente.
             port: Puerto del servidor ChromaDB (ignorado en modo local).
             collection_name: Nombre de la colección a usar o crear.
+            path: Ruta al directorio local de ChromaDB (solo modo local).
         """
         self.collection_name = collection_name
 
         if host == "local":
-            self.client = chromadb.PersistentClient(path=".chroma")
-            logger.info("ChromaDB: modo PersistentClient (path=.chroma)")
+            self.client = chromadb.PersistentClient(path=path)
+            logger.info("ChromaDB: modo PersistentClient (path=%s)", path)
         else:
             self.client = chromadb.HttpClient(host=host, port=port)
             logger.info("ChromaDB: modo HttpClient (%s:%d)", host, port)
