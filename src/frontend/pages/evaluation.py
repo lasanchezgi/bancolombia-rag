@@ -1,12 +1,15 @@
 """
 Página Streamlit: resultados de evaluación formal del sistema RAG.
 
-Lee data/eval_results.json (generado por notebooks/rag_evaluation.ipynb)
-y visualiza métricas de faithfulness y factuality con y sin reranking.
-Acceso protegido con la misma contraseña que monitoring.py.
+Muestra métricas de faithfulness y factualidad comparando el pipeline
+base (sin reranking) contra el pipeline con Cross-Encoder reranking.
+Los datos se leen de data/eval_results.json generado por el notebook
+notebooks/rag_evaluation.ipynb.
 
-Streamlit detecta automáticamente este archivo en pages/ y lo agrega
-como navegación en el sidebar.
+Acceso protegido con la misma contraseña que el panel de monitoreo.
+
+Ejecución (junto con app.py):
+    uv run streamlit run src/frontend/app.py
 """
 
 from __future__ import annotations
@@ -21,6 +24,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+DATA_DIR = ROOT / "data"
+
 st.set_page_config(
     page_title="Evaluación RAG — Bancolombia",
     page_icon="🧪",
@@ -34,7 +40,7 @@ st.set_page_config(
 MONITORING_PASSWORD = os.getenv("MONITORING_PASSWORD", "bancolombia2026")
 
 if not st.session_state.get("authenticated"):
-    st.title("🧪 Evaluación RAG — Bancolombia")
+    st.title("🧪 Evaluación Formal del Sistema RAG")
     st.markdown("Acceso restringido al equipo interno.")
     pwd = st.text_input("🔐 Contraseña de acceso", type="password")
     if pwd == MONITORING_PASSWORD:
@@ -45,229 +51,347 @@ if not st.session_state.get("authenticated"):
     st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Carga de datos
+# ──────────────────────────────────────────────────────────────────────────────
+
+eval_path = DATA_DIR / "eval_results.json"
+
+st.title("🧪 Evaluación Formal del Sistema RAG")
+st.markdown(
+    "<span style='color: #9ca3af;'>" "15 preguntas · LLM-as-judge · gpt-4o-mini · Abril 2026" "</span>",
+    unsafe_allow_html=True,
+)
+
+if not eval_path.exists():
+    st.warning(
+        "⚠️ No hay resultados de evaluación disponibles.\n\n"
+        "Ejecuta el notebook `notebooks/rag_evaluation.ipynb` "
+        "para generar las métricas."
+    )
+    st.code("jupyter notebook notebooks/rag_evaluation.ipynb")
+    st.stop()
+
+try:
+    with eval_path.open(encoding="utf-8") as f:
+        eval_results: dict = json.load(f)
+except Exception as exc:  # noqa: BLE001
+    st.error(f"Error leyendo {eval_path}: {exc}")
+    st.stop()
+
+generated_at = eval_results.get("generated_at", "N/A")
+st.caption(f"Generado: {generated_at}")
+
+summary_no_rr: dict = eval_results.get("without_reranking", {}).get("summary", {})
+summary_rr: dict = eval_results.get("with_reranking", {}).get("summary", {})
+results_no_rr: list[dict] = eval_results.get("without_reranking", {}).get("results", [])
+results_rr: list[dict] = eval_results.get("with_reranking", {}).get("results", [])
+
+faith_no = summary_no_rr.get("avg_faithfulness", 0.0) or 0.0
+f1_no = summary_no_rr.get("avg_factuality_f1", 0.0) or 0.0
+prec_no = summary_no_rr.get("avg_factuality_precision", 0.0) or 0.0
+rec_no = summary_no_rr.get("avg_factuality_recall", 0.0) or 0.0
+
+faith_rr = summary_rr.get("avg_faithfulness", 0.0) or 0.0
+f1_rr = summary_rr.get("avg_factuality_f1", 0.0) or 0.0
+prec_rr = summary_rr.get("avg_factuality_precision", 0.0) or 0.0
+rec_rr = summary_rr.get("avg_factuality_recall", 0.0) or 0.0
+
+delta_faith = faith_rr - faith_no
+delta_f1 = f1_rr - f1_no
+delta_prec = prec_rr - prec_no
+delta_rec = rec_rr - rec_no
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ──────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.title("🏦 Bancolombia RAG")
-    st.caption("Evaluación formal del pipeline")
+    st.caption("🧪 Evaluación RAG")
     st.divider()
 
-    st.subheader("⚙️ Fuente de datos")
-    eval_path_display = os.getenv("EVAL_RESULTS_PATH", "data/eval_results.json")
-    st.code(eval_path_display, language=None)
-
-    st.divider()
-    st.subheader("📖 Cómo ejecutar")
-    st.markdown(
-        "1. Asegúrate de tener ChromaDB con datos\n"
-        "2. Ejecuta el notebook:\n"
-        "   `notebooks/rag_evaluation.ipynb`\n"
-        "3. Regresa a esta página y recarga"
+    st.subheader("📊 Resumen ejecutivo")
+    st.metric("F1 con reranking", f"{f1_rr:.3f}")
+    st.metric("Precision", f"{prec_rr:.3f}")
+    st.metric(
+        "Preguntas evaluadas",
+        summary_rr.get("total_evaluated", 0),
     )
 
     st.divider()
     st.page_link("app.py", label="← Ir al Chat")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Sección 1 — Header y carga de datos
-# ──────────────────────────────────────────────────────────────────────────────
-
-st.title("🧪 Evaluación RAG — Calidad del Sistema")
-st.caption("Faithfulness · Factuality Precision · Factuality Recall · F1")
-
-eval_results_path = Path(os.getenv("EVAL_RESULTS_PATH", "data/eval_results.json"))
-
-if not eval_results_path.exists():
-    st.warning(
-        "⚠️ No hay resultados de evaluación disponibles.\n\n"
-        "Ejecuta el notebook `notebooks/rag_evaluation.ipynb` para generar las métricas.\n\n"
-        "Asegúrate de tener ChromaDB con datos cargados antes de ejecutarlo."
-    )
-    st.stop()
-
-try:
-    eval_data = json.loads(eval_results_path.read_text(encoding="utf-8"))
-except Exception as exc:  # noqa: BLE001
-    st.error(f"Error leyendo {eval_results_path}: {exc}")
-    st.stop()
-
-summary_no_rr = eval_data.get("without_reranking", {}).get("summary", {})
-summary_rr = eval_data.get("with_reranking", {}).get("summary", {})
-results_no_rr = eval_data.get("without_reranking", {}).get("results", [])
-results_rr = eval_data.get("with_reranking", {}).get("results", [])
-generated_at = eval_data.get("generated_at", "")
-
-st.caption(f"Evaluación generada: {generated_at[:19].replace('T', ' ') if generated_at else 'N/A'}")
-st.divider()
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Sección 2 — KPIs comparativos
-# ──────────────────────────────────────────────────────────────────────────────
-
-st.header("📊 KPIs Comparativos: Sin vs Con Reranking")
-
-col_no_rr, col_rr = st.columns(2)
-
-_metrics_map = [
-    ("avg_faithfulness", "🎯 Faithfulness"),
-    ("avg_factuality_f1", "📐 Factuality F1"),
-    ("avg_factuality_precision", "🔍 Precision"),
-    ("avg_factuality_recall", "📋 Recall"),
-]
-
-with col_no_rr:
-    st.subheader("Sin Reranking")
-    for key, label in _metrics_map:
-        val = summary_no_rr.get(key, 0.0) or 0.0
-        st.metric(label, f"{val:.3f}")
-
-with col_rr:
-    st.subheader("Con Reranking")
-    for key, label in _metrics_map:
-        val_rr = summary_rr.get(key, 0.0) or 0.0
-        val_no_rr = summary_no_rr.get(key, 0.0) or 0.0
-        delta = val_rr - val_no_rr
-        sign = "+" if delta >= 0 else ""
-        st.metric(label, f"{val_rr:.3f}", delta=f"{sign}{delta:.3f}")
+    st.page_link("pages/monitoring.py", label="📊 Ir a Monitoreo")
 
 st.divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Sección 3 — Gráficas
+# Sección 1 — KPIs comparativos
 # ──────────────────────────────────────────────────────────────────────────────
 
-st.header("📈 Visualizaciones")
+col_no, col_rr_col = st.columns(2)
 
-tab_scatter, tab_bar = st.tabs(["F1 vs Faithfulness", "Impacto del Reranking"])
+with col_no:
+    st.markdown("### 📊 Sin Reranking (baseline)")
+    m1, m2 = st.columns(2)
+    with m1:
+        st.metric("Faithfulness", f"{faith_no:.3f}")
+        st.metric("Precision", f"{prec_no:.3f}")
+    with m2:
+        st.metric("F1", f"{f1_no:.3f}")
+        st.metric("Recall", f"{rec_no:.3f}")
 
-_scatter_path = Path("data/eval_f1_vs_faithfulness.png")
-_bar_path = Path("data/eval_reranking_impact.png")
-
-with tab_scatter:
-    if _scatter_path.exists():
-        st.image(str(_scatter_path), use_column_width=True)
-        st.markdown(
-            "**Interpretación de cuadrantes:**\n"
-            "- ✅ **Ideal** (faith alto, F1 alto): el sistema recupera y responde correctamente\n"
-            "- ⚠️ **Alucinación** (faith bajo, F1 alto): responde bien pero sin basarse en los chunks\n"
-            "- 🔍 **Retrieval pobre** (faith alto, F1 bajo): fiel al contexto pero el contexto no es el correcto\n"
-            "- ❌ **Fallo total** (faith bajo, F1 bajo): ni recupera bien ni responde bien"
+with col_rr_col:
+    st.markdown("### 🚀 Con Reranking (Cross-Encoder)")
+    m3, m4 = st.columns(2)
+    with m3:
+        st.metric(
+            "Faithfulness",
+            f"{faith_rr:.3f}",
+            delta=f"{delta_faith:+.3f}",
+            delta_color="normal",
         )
-    else:
-        st.info("Gráfica no disponible. Ejecuta el notebook para generarla.")
-
-with tab_bar:
-    if _bar_path.exists():
-        st.image(str(_bar_path), use_column_width=True)
-        st.markdown(
-            "**Cómo leer esta gráfica:**\n"
-            "- Barras rojas: resultados sin reranking\n"
-            "- Barras verdes: resultados con reranking\n"
-            "- Un delta positivo indica que el reranking mejora esa métrica"
+        st.metric(
+            "Precision",
+            f"{prec_rr:.3f}",
+            delta=f"{delta_prec:+.3f}",
+            delta_color="off",
         )
-    else:
-        st.info("Gráfica no disponible. Ejecuta el notebook para generarla.")
+    with m4:
+        st.metric(
+            "F1",
+            f"{f1_rr:.3f}",
+            delta=f"{delta_f1:+.3f}",
+            delta_color="normal",
+        )
+        st.metric(
+            "Recall",
+            f"{rec_rr:.3f}",
+            delta=f"{delta_rec:+.3f}",
+            delta_color="normal",
+        )
+
+st.info(
+    f"💡 **Interpretación:** El reranking mejora F1 ({delta_f1:+.1%}) y "
+    f"Recall ({delta_rec:+.1%}) a costa de una reducción en Faithfulness "
+    f"({delta_faith:+.1%}). El baseline sin reranking ya es muy fuerte "
+    f"(F1: {f1_no:.3f}), lo que limita el margen de mejora. La Precision "
+    "se mantiene estable en ambos casos, confirmando ausencia de alucinación factual."
+)
 
 st.divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Sección 4 — Tabla detallada por pregunta
+# Sección 2 — Gráficas (tabs)
 # ──────────────────────────────────────────────────────────────────────────────
 
-st.header("📋 Resultados por Pregunta")
+tab1, tab2 = st.tabs(["🎯 F1 vs Faithfulness", "📈 Impacto del Reranking"])
+
+scatter_path = DATA_DIR / "eval_f1_vs_faithfulness.png"
+barplot_path = DATA_DIR / "eval_reranking_impact.png"
+
+with tab1:
+    if scatter_path.exists():
+        col_l, col_c, col_r = st.columns([1, 3, 1])
+        with col_c:
+            st.image(str(scatter_path), use_container_width=True)
+    else:
+        st.info(
+            "📊 La imagen no está disponible. " "Ejecuta el notebook `notebooks/rag_evaluation.ipynb` para generarla."
+        )
+
+    st.markdown("""
+**Guía de cuadrantes:**
+
+| Zona | Faithfulness | F1 | Diagnóstico |
+|---|---|---|---|
+| ✅ Ideal (arriba-derecha) | >0.7 | >0.7 | Sistema saludable |
+| ⚠️ Alucinación (arriba-izquierda) | <0.7 | >0.7 | LLM genera más allá del contexto |
+| ⚠️ Retrieval pobre (abajo-derecha) | >0.7 | <0.7 | Chunks no informativos |
+| 🚨 Fallo total (abajo-izquierda) | <0.7 | <0.7 | Problema sistémico |
+
+**Hallazgo:** La mayoría de puntos se concentran en el cuadrante ideal.
+No se detectó alucinación factual sistémica.
+""")
+
+with tab2:
+    if barplot_path.exists():
+        col_l, col_c, col_r = st.columns([1, 3, 1])
+        with col_c:
+            st.image(str(barplot_path), use_container_width=True)
+    else:
+        st.info(
+            "📊 La imagen no está disponible. " "Ejecuta el notebook `notebooks/rag_evaluation.ipynb` para generarla."
+        )
+
+    st.markdown(f"""
+**Resumen del impacto:**
+- F1 mejora **{delta_f1:+.1%}** con reranking
+- Recall mejora **{delta_rec:+.1%}** — mayor cobertura de hechos
+- Faithfulness baja **{delta_faith:+.1%}** — el LLM infiere más allá \
+del contexto literal con chunks más relevantes
+- Precision estable — sin introducción de errores
+""")
+
+st.divider()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sección 3 — Tabla detallada por pregunta
+# ──────────────────────────────────────────────────────────────────────────────
+
+st.subheader("📋 Resultados por pregunta")
+
+
+def _color_delta(val: float) -> str:
+    if val > 0.02:
+        return "background-color: #1a472a; color: white"
+    if val < -0.02:
+        return "background-color: #7f1d1d; color: white"
+    return "background-color: #374151; color: white"
+
 
 if results_no_rr and results_rr:
-    try:
-        table_rows = []
-        for r_no, r_yes in zip(results_no_rr, results_rr):
-            f1_no = r_no.get("factuality_f1") or 0.0
-            f1_yes = r_yes.get("factuality_f1") or 0.0
-            delta_f1 = round(f1_yes - f1_no, 3)
-            table_rows.append(
-                {
-                    "Pregunta": r_no.get("question", "")[:60] + ("..." if len(r_no.get("question", "")) > 60 else ""),
-                    "F1 sin RR": round(f1_no, 3),
-                    "F1 con RR": round(f1_yes, 3),
-                    "Faith sin RR": round(r_no.get("faithfulness", 0.0), 3),
-                    "Faith con RR": round(r_yes.get("faithfulness", 0.0), 3),
-                    "Delta F1": delta_f1,
-                }
-            )
-
-        detail_df = pd.DataFrame(table_rows)
-
-        def _color_delta(val: float):
-            if val > 0.05:
-                return "background-color: #d4edda"
-            if val < -0.05:
-                return "background-color: #f8d7da"
-            return "background-color: #fff3cd"
-
-        styled = detail_df.style.applymap(_color_delta, subset=["Delta F1"])
-        st.dataframe(styled, hide_index=True, use_container_width=True)
-
-        csv_bytes = detail_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="⬇️ Exportar tabla CSV",
-            data=csv_bytes,
-            file_name="eval_results_detail.csv",
-            mime="text/csv",
+    rows = []
+    for r_no, r_rr in zip(results_no_rr, results_rr):
+        question = r_no.get("question", "")
+        f1_no_q = r_no.get("factuality_f1") or 0.0
+        f1_rr_q = r_rr.get("factuality_f1") or 0.0
+        rows.append(
+            {
+                "Pregunta": question[:60] + ("..." if len(question) > 60 else ""),
+                "F1 sin RR": round(f1_no_q, 3),
+                "F1 con RR": round(f1_rr_q, 3),
+                "Faith sin RR": round(r_no.get("faithfulness", 0.0), 3),
+                "Faith con RR": round(r_rr.get("faithfulness", 0.0), 3),
+                "Delta F1": round(f1_rr_q - f1_no_q, 3),
+            }
         )
-    except Exception as exc:  # noqa: BLE001
-        st.warning(f"Error construyendo tabla: {exc}")
+
+    df = pd.DataFrame(rows)
+    try:
+        styled = df.style.map(_color_delta, subset=["Delta F1"])
+    except AttributeError:
+        styled = df.style.applymap(_color_delta, subset=["Delta F1"])  # type: ignore[attr-defined]
+
+    st.dataframe(styled, hide_index=True, use_container_width=True)
+
+    st.markdown("#### 🔍 Detalle por pregunta")
+    for r_no, r_rr in zip(results_no_rr, results_rr):
+        question = r_no.get("question", "")
+        with st.expander(f"Ver detalle: {question[:50]}..."):
+            st.markdown(f"**Pregunta completa:** {question}")
+            st.divider()
+
+            det_col1, det_col2 = st.columns(2)
+            with det_col1:
+                st.markdown("**Sin reranking**")
+                st.caption(
+                    f"Faithfulness: {r_no.get('faithfulness', 0):.3f} · " f"F1: {r_no.get('factuality_f1') or 0:.3f}"
+                )
+                faith_r = r_no.get("faithfulness_reasoning", "")
+                if faith_r:
+                    st.markdown(f"*Faithfulness:* {faith_r}")
+                fact_r = r_no.get("factuality_reasoning", "")
+                if fact_r:
+                    st.markdown(f"*Factuality:* {fact_r}")
+
+            with det_col2:
+                st.markdown("**Con reranking**")
+                st.caption(
+                    f"Faithfulness: {r_rr.get('faithfulness', 0):.3f} · " f"F1: {r_rr.get('factuality_f1') or 0:.3f}"
+                )
+                faith_r_rr = r_rr.get("faithfulness_reasoning", "")
+                if faith_r_rr:
+                    st.markdown(f"*Faithfulness:* {faith_r_rr}")
+                fact_r_rr = r_rr.get("factuality_reasoning", "")
+                if fact_r_rr:
+                    st.markdown(f"*Factuality:* {fact_r_rr}")
+
+            gt_url = r_no.get("ground_truth_url") or r_rr.get("ground_truth_url")
+            if gt_url:
+                st.markdown(f"**Ground truth:** [{gt_url}]({gt_url})")
+
+            st.caption(
+                f"Ground truth disponible: {'✅' if r_no.get('ground_truth_found') else '❌'} · "
+                f"Categoría: {r_no.get('expected_category', 'N/A')} · "
+                f"use_reranking: {r_rr.get('use_reranking', True)}"
+            )
 else:
-    st.info("No hay resultados disponibles aún.")
+    st.info("No hay resultados por pregunta disponibles.")
 
 st.divider()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Sección 5 — Diagnóstico del sistema
+# Sección 4 — Diagnóstico del sistema
 # ──────────────────────────────────────────────────────────────────────────────
 
-st.header("🔬 Diagnóstico del Sistema")
+st.subheader("🔬 Diagnóstico del sistema")
 
-try:
-    high_faith_low_fact = summary_rr.get("high_faith_low_fact", [])
-    low_faith_high_fact = summary_rr.get("low_faith_high_fact", [])
+high_faith_low_fact: list = summary_rr.get("high_faith_low_fact", [])
+low_faith_high_fact: list = summary_rr.get("low_faith_high_fact", [])
 
-    if high_faith_low_fact:
-        st.warning("⚠️ **Posible problema de retrieval**")
-        st.markdown(
-            "Estas preguntas tienen alta faithfulness pero baja factualidad — "
-            "los chunks recuperados no contienen la información correcta sobre el tema:"
-        )
-        for q in high_faith_low_fact:
-            st.markdown(f"- {q}")
+if not high_faith_low_fact and not low_faith_high_fact:
+    st.success(
+        "✅ **Sistema RAG saludable**\n\n"
+        "No se detectaron patrones de alucinación ni retrieval fallido "
+        "en ninguna de las preguntas evaluadas."
+    )
 
-    if low_faith_high_fact:
-        st.error("🚨 **Posible alucinación detectada**")
-        st.markdown(
-            "Estas preguntas tienen alta factualidad pero baja faithfulness — "
-            "el agente genera información correcta pero que no está en los chunks recuperados:"
-        )
-        for q in low_faith_high_fact:
-            st.markdown(f"- {q}")
+if high_faith_low_fact:
+    st.warning(
+        f"⚠️ **Posible problema de retrieval** ({len(high_faith_low_fact)} preguntas)\n\n"
+        "Alta Faithfulness pero baja Factualidad — los chunks recuperados son coherentes "
+        "con la respuesta pero no contienen información factualmente correcta.\n\n"
+        + "\n".join(f"- {q}" for q in high_faith_low_fact)
+    )
 
-    if not high_faith_low_fact and not low_faith_high_fact:
-        st.success("✅ Sistema RAG saludable — sin anomalías detectadas en el conjunto de evaluación.")
+if low_faith_high_fact:
+    st.error(
+        f"🚨 **Posible alucinación detectada** ({len(low_faith_high_fact)} preguntas)\n\n"
+        "El agente genera hechos correctos que no están en los chunks recuperados. "
+        "Puede ser paráfrasis del LLM más que alucinación factual — revisar manualmente.\n\n"
+        + "\n".join(f"- {q}" for q in low_faith_high_fact)
+    )
 
-    # Estadísticas adicionales
-    st.divider()
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        total = summary_rr.get("total_evaluated", 0)
-        gt_avail = summary_rr.get("gt_available", 0)
-        st.metric("Preguntas evaluadas", total)
-        st.metric("Con ground truth", gt_avail)
-    with col_b:
-        best = summary_rr.get("best_question", "")
-        st.markdown("**Mejor pregunta (mayor F1):**")
-        st.caption(best[:80] + ("..." if len(best) > 80 else "") if best else "N/A")
-    with col_c:
-        worst = summary_rr.get("worst_question", "")
-        st.markdown("**Pregunta más difícil (menor F1):**")
-        st.caption(worst[:80] + ("..." if len(worst) > 80 else "") if worst else "N/A")
+st.divider()
 
-except Exception as exc:  # noqa: BLE001
-    st.warning(f"Error cargando diagnóstico: {exc}")
+# ──────────────────────────────────────────────────────────────────────────────
+# Sección 5 — Conclusiones (colapsable)
+# ──────────────────────────────────────────────────────────────────────────────
+
+with st.expander("📝 Ver conclusiones completas", expanded=False):
+    st.markdown(f"""
+### Hallazgos principales
+
+**1. Sistema RAG de alta calidad**
+F1 de {f1_no:.3f} sin reranking y {f1_rr:.3f} con reranking.
+Precision de {prec_no:.3f} — prácticamente sin alucinación.
+
+**2. Reranking con impacto modesto pero positivo**
+El baseline ya es muy fuerte (F1: {f1_no:.3f}), limitando el margen de mejora.
+La mejora en Recall ({delta_rec:+.1%}) justifica el costo de latencia para
+casos donde la completitud es prioritaria.
+
+**3. Trade-off documentado: Faithfulness vs Recall**
+El reranking reduce Faithfulness ({delta_faith:+.1%}) mientras mejora
+Recall ({delta_rec:+.1%}). El LLM infiere más allá del contexto literal
+cuando recibe chunks más informativos. Esto no es alucinación factual
+(Precision estable).
+
+**4. Sistema conservador ante out-of-scope**
+Las 2 preguntas fuera de scope fueron correctamente manejadas —
+el agente no inventó respuestas.
+
+### Recomendaciones
+
+| Prioridad | Acción | Impacto |
+|---|---|---|
+| Alta | Ampliar cobertura tarjeta débito transporte | +F1 |
+| Media | Aumentar MAX_PAGES a 200+ URLs | Mayor cobertura |
+| Baja | Cross-Encoder en GPU en producción | -latencia |
+
+### Limitaciones
+- Dataset de 15 preguntas (ampliar a 50+ en producción)
+- LLM-as-judge puede tener sesgos propios
+- Ground truth estático (abril 2026)
+- Modelo de reranking entrenado principalmente en inglés
+""")

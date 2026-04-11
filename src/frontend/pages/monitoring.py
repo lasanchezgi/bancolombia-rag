@@ -107,6 +107,7 @@ with st.sidebar:
 
     st.divider()
     st.page_link("app.py", label="← Ir al Chat")
+    st.page_link("pages/evaluation.py", label="🧪 Evaluación RAG", icon="🧪")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Sección 1 — Header y KPIs
