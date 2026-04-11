@@ -2,7 +2,7 @@ services:
 
   # ─── ChromaDB: vector store persistente ────────────────────────────────────
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.6.3
     ports:
       - "8000:8000"
     volumes:
@@ -10,6 +10,12 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - rag_network
 
@@ -38,7 +44,6 @@ services:
     volumes:
       - .memory:/app/.memory          # LongTermMemory persistida entre reinicios
       - ./data:/app/data              # datos del scraper accesibles al frontend
-      - ./.env:/app/.env:ro           # .env disponible dentro del contenedor
       - chroma_data_local:/app/.chroma  # ChromaDB local como fallback
     depends_on:
       - chromadb

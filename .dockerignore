@@ -1,0 +1,32 @@
+# Control de versiones
+.git
+.gitignore
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# Entornos y secretos
+.env
+.env.*
+!.env.example
+
+# Datos generados en runtime (se montan como volúmenes)
+data/raw/
+data/processed/
+data/conversations.db
+data/*.png
+.memory/
+.chroma/
+
+# Desarrollo
+notebooks/
+tests/
+.venv/
+
+# macOS
+**/.DS_Store

@@ -75,7 +75,7 @@ def render_sidebar() -> None:
         st.subheader("🔍 Temas disponibles")
         for cat in _CATEGORIES:
             st.write(f"• {cat}")
-            
+
         st.divider()
         if st.button("🗑️ Nueva conversación", use_container_width=True):
             st.session_state.agent.reset_conversation()

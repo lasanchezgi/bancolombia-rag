@@ -310,6 +310,3 @@ bancolombia-rag/
 ## Autor
 
 **Laura Sánchez** · [@lasanchezgi](https://github.com/lasanchezgi)
-
-Prueba técnica — Proceso de selección 59034
-Bancolombia · Tecnología e IA TI · Nivel 3 Semi Senior · Abril 2026
