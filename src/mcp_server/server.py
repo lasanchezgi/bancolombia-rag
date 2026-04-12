@@ -18,9 +18,9 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 try:
-    from .tools import register_tools
+    from .tools import preload_reranker, register_tools
 except ImportError:
-    from src.mcp_server.tools import register_tools  # type: ignore[no-redef]
+    from src.mcp_server.tools import preload_reranker, register_tools  # type: ignore[no-redef]
 
 
 def create_server() -> FastMCP:
@@ -47,6 +47,7 @@ def create_server() -> FastMCP:
     )
 
     register_tools(mcp)
+    preload_reranker()
     return mcp
 
 

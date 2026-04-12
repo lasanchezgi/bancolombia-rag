@@ -161,7 +161,9 @@ class RAGAgent:
             args=[self.mcp_server_script],
         )
         read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
-        self._mcp_session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+        self._mcp_session = await self._exit_stack.enter_async_context(
+            ClientSession(read, write, read_timeout_seconds=30)
+        )
         await self._mcp_session.initialize()
         logger.info("Sesión MCP inicializada con %s", self.mcp_server_script)
         return self._mcp_session

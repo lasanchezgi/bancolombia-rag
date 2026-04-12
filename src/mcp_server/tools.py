@@ -36,6 +36,12 @@ def get_reranker() -> Reranker:
     return _reranker_instance
 
 
+def preload_reranker() -> None:
+    """Precarga el modelo Cross-Encoder en memoria al arrancar el servidor."""
+    get_reranker()
+    logger.info("Reranker precargado en startup")
+
+
 def _get_repository() -> ChromaRepository:
     """Instancia ChromaRepository con config del entorno."""
     host = os.getenv("CHROMA_HOST", "local")
