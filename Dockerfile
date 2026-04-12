@@ -21,6 +21,7 @@ COPY data/eval_results.json ./data/
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV HOME=/app
 
 RUN mkdir -p data/raw data/processed .chroma .memory .uv-cache \
     && addgroup --system appgroup \
