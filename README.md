@@ -24,7 +24,7 @@ cualquier cliente MCP compatible — incluyendo Claude Desktop.
 
 ## Arquitectura
 
-![Arquitectura](docs/architecture.png)
+![Arquitectura](docs/architecture_b.png)
 
 ### Flujo de datos end-to-end
 
