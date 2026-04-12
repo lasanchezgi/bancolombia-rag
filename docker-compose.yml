@@ -24,9 +24,7 @@ services:
   # hijo via stdio — NO como servicio de red separado. Esto es el patrón
   # correcto del protocolo MCP con transporte stdio.
   frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: lasanchezgi/bancolombia-rag:latest
     command: >
       uv run streamlit run src/frontend/app.py
       --server.port=8501
