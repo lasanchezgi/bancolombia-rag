@@ -12,15 +12,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 
 from src.embeddings.embedder import Embedder
+from src.embeddings.reranker import Reranker
 from src.vector_store.chroma_repository import ChromaRepository
 
 logger = logging.getLogger(__name__)
+
+_reranker_instance: Reranker | None = None
+
+
+def get_reranker() -> Reranker:
+    """Retorna el singleton del Reranker, instanciándolo la primera vez."""
+    global _reranker_instance
+    if _reranker_instance is None:
+        _reranker_instance = Reranker()
+    return _reranker_instance
 
 
 def _get_repository() -> ChromaRepository:
@@ -28,7 +41,10 @@ def _get_repository() -> ChromaRepository:
     host = os.getenv("CHROMA_HOST", "local")
     port = int(os.getenv("CHROMA_PORT", "8000"))
     collection = os.getenv("CHROMA_COLLECTION", "bancolombia_kb")
-    return ChromaRepository(host=host, port=port, collection_name=collection)
+    # Resolve .chroma relative to project root (parents[2] = src/mcp_server/tools.py -> root)
+    project_root = Path(__file__).resolve().parents[2]
+    chroma_path = os.getenv("CHROMA_PATH", str(project_root / ".chroma"))
+    return ChromaRepository(host=host, port=port, collection_name=collection, path=chroma_path)
 
 
 def _get_embedder() -> Embedder:
@@ -45,7 +61,12 @@ def register_tools(mcp: FastMCP) -> None:
     """
 
     @mcp.tool  # type: ignore[misc]
-    def search_knowledge_base(query: str, top_k: int = 5, category: str | None = None) -> dict[str, Any]:
+    def search_knowledge_base(
+        query: str,
+        top_k: int = 5,
+        category: str | None = None,
+        use_reranking: bool = True,
+    ) -> dict[str, Any]:
         """Busca información sobre productos, servicios y contenido de Bancolombia en la base de conocimiento.
 
         Usa esta herramienta cuando el usuario pregunte sobre cuentas, tarjetas, créditos,
@@ -57,19 +78,60 @@ def register_tools(mcp: FastMCP) -> None:
             top_k: Número de resultados a retornar (default: 5, max: 10)
             category: Filtrar por categoría específica. Categorías disponibles: cuentas,
                       tarjetas-de-credito, tarjetas-debito, creditos, beneficios, giros, general. Opcional.
+            use_reranking: Si True (default), aplica reranking con Cross-Encoder tras recuperar candidatos de
+                           ChromaDB, mejorando la precisión a costa de ~200ms adicionales. Usar False para
+                           respuestas rápidas cuando la velocidad es prioritaria.
         """
         try:
+            t_start = time.time()
             embedder = _get_embedder()
             repository = _get_repository()
 
             embeddings = embedder.embed_texts([query])
             query_embedding = embeddings[0]
 
+            n_candidates = top_k * 3 if use_reranking else top_k
             filters = {"category": {"$eq": category}} if category else None
-            results = repository.query(query_embedding=query_embedding, top_k=min(top_k, 10), filters=filters)
+            raw_results = repository.query(
+                query_embedding=query_embedding,
+                top_k=min(n_candidates, 30),
+                filters=filters,
+            )
 
-            if not results:
-                return {"results": [], "total": 0, "message": "No se encontró información relevante", "query": query}
+            t_after_retrieval = time.time()
+            retrieval_ms = int((t_after_retrieval - t_start) * 1000)
+            top_chromadb_score: float | None = raw_results[0]["score"] if raw_results else None
+
+            if not raw_results:
+                return {
+                    "results": [],
+                    "total": 0,
+                    "message": "No se encontró información relevante",
+                    "query": query,
+                    "_trace": {
+                        "chunks_retrieved": 0,
+                        "chunks_after_rerank": 0,
+                        "top_chromadb_score": None,
+                        "top_rerank_score": None,
+                        "retrieval_ms": retrieval_ms,
+                        "reranking_ms": 0,
+                        "use_reranking": use_reranking,
+                        "category_filter": category,
+                    },
+                }
+
+            if use_reranking:
+                results = get_reranker().rerank(query, raw_results, top_k)
+                retrieval_method = "chromadb+reranking"
+            else:
+                results = raw_results[:top_k]
+                for r in results:
+                    r["rerank_score"] = None
+                retrieval_method = "chromadb_only"
+
+            t_after_rerank = time.time()
+            reranking_ms = int((t_after_rerank - t_after_retrieval) * 1000)
+            top_rerank_score: float | None = results[0].get("rerank_score") if (use_reranking and results) else None
 
             return {
                 "results": [
@@ -80,11 +142,23 @@ def register_tools(mcp: FastMCP) -> None:
                         "category": r["category"],
                         "relevance_score": r["score"],
                         "chunk_index": r["chunk_index"],
+                        "rerank_score": r.get("rerank_score"),
+                        "retrieval_method": retrieval_method,
                     }
                     for r in results
                 ],
                 "total": len(results),
                 "query": query,
+                "_trace": {
+                    "chunks_retrieved": len(raw_results),
+                    "chunks_after_rerank": len(results),
+                    "top_chromadb_score": top_chromadb_score,
+                    "top_rerank_score": top_rerank_score,
+                    "retrieval_ms": retrieval_ms,
+                    "reranking_ms": reranking_ms,
+                    "use_reranking": use_reranking,
+                    "category_filter": category,
+                },
             }
         except Exception as exc:  # noqa: BLE001
             logger.error("Error en search_knowledge_base: %s", exc)
