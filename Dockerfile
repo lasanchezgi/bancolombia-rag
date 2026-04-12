@@ -10,6 +10,8 @@ RUN pip install uv
 
 WORKDIR /app
 
+ENV UV_CACHE_DIR=/app/.uv-cache
+
 # Copiar archivos de dependencias primero (cache de Docker)
 COPY pyproject.toml .
 COPY uv.lock* .
@@ -25,8 +27,11 @@ COPY scripts/ ./scripts/
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Crear directorios necesarios
-RUN mkdir -p data/raw data/processed .chroma .memory
+# Crear directorios necesarios y usuario sin privilegios
+RUN mkdir -p data/raw data/processed .chroma .memory .uv-cache \
+    && addgroup --system appgroup \
+    && adduser --system --ingroup appgroup --no-create-home appuser \
+    && chown -R appuser:appgroup /app
 
 # Comando por defecto — cada servicio lo sobreescribe en docker-compose.yml
 CMD ["uv", "run", "streamlit", "run", "src/frontend/app.py", \
