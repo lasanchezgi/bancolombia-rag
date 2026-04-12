@@ -353,6 +353,12 @@ bancolombia-rag/
 
 ---
 
+## App desplegada
+
+🤖 [Asistente Bancolombia](http://98.81.30.8:8501/)
+
+---
+
 ## Video demo
 
 🎬 [Ver demo](URL_DEL_VIDEO)
