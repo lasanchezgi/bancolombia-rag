@@ -25,7 +25,7 @@ from src.vector_store.chroma_repository import ChromaRepository
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RERANKING = os.getenv("USE_RERANKING", "false").lower() == "true"
+DEFAULT_RERANKING = os.getenv("USE_RERANKING", "true").lower() == "true"
 
 _reranker_instance: Reranker | None = None
 

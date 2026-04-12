@@ -39,7 +39,7 @@ services:
       - CHROMA_PORT=8000
       - MCP_SERVER_SCRIPT=src/mcp_server/server.py
       - MONITORING_PASSWORD=${MONITORING_PASSWORD:-bancolombia2026}
-      - USE_RERANKING=false
+      - USE_RERANKING=${USE_RERANKING:-false}
     volumes:
       - .memory:/app/.memory          # LongTermMemory persistida entre reinicios
       - ./data:/app/data              # datos del scraper accesibles al frontend
