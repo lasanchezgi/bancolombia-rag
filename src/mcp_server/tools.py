@@ -25,6 +25,8 @@ from src.vector_store.chroma_repository import ChromaRepository
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RERANKING = os.getenv("USE_RERANKING", "false").lower() == "true"
+
 _reranker_instance: Reranker | None = None
 
 
@@ -37,7 +39,13 @@ def get_reranker() -> Reranker:
 
 
 def preload_reranker() -> None:
-    """Precarga el modelo Cross-Encoder en memoria al arrancar el servidor."""
+    """Precarga el modelo Cross-Encoder en memoria al arrancar el servidor.
+
+    No-op si USE_RERANKING=false para evitar cargar el modelo en EC2.
+    """
+    if not DEFAULT_RERANKING:
+        logger.info("Reranker desactivado (USE_RERANKING=false), omitiendo precarga")
+        return
     get_reranker()
     logger.info("Reranker precargado en startup")
 
@@ -71,7 +79,7 @@ def register_tools(mcp: FastMCP) -> None:
         query: str,
         top_k: int = 5,
         category: str | None = None,
-        use_reranking: bool = True,
+        use_reranking: bool = DEFAULT_RERANKING,
     ) -> dict[str, Any]:
         """Busca información sobre productos, servicios y contenido de Bancolombia en la base de conocimiento.
 
