@@ -45,6 +45,7 @@ services:
       - .memory:/app/.memory          # LongTermMemory persistida entre reinicios
       - ./data:/app/data              # datos del scraper accesibles al frontend
       - chroma_data_local:/app/.chroma  # ChromaDB local como fallback
+      - ./.env:/app/.env:ro           # variables de entorno accesibles al proceso hijo
     depends_on:
       - chromadb
     networks:
