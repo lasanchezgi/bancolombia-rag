@@ -316,7 +316,7 @@ uv run black --check src/ tests/
 ```
 
 GitHub Actions corre automáticamente en cada push a `main`:
-`ruff → black → pytest (140 tests)`
+`ruff → black → pytest (126 tests)`
 
 ---
 
@@ -338,7 +338,7 @@ bancolombia-rag/
 │           └── evaluation.py  # Métricas faithfulness/factualidad (protegido)
 ├── notebooks/
 │   └── rag_evaluation.ipynb   # Pipeline de evaluación formal
-├── tests/                # 140 tests unitarios
+├── tests/                # 126 tests unitarios
 ├── scripts/              # run_scraper.py, run_pipeline.py
 ├── data/
 │   ├── eval_results.json # Resultados de evaluación (estático, en imagen Docker)
