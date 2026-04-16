@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -162,7 +163,7 @@ class RAGAgent:
         )
         read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
         self._mcp_session = await self._exit_stack.enter_async_context(
-            ClientSession(read, write, read_timeout_seconds=30)
+            ClientSession(read, write, read_timeout_seconds=timedelta(seconds=30))
         )
         await self._mcp_session.initialize()
         logger.info("Sesión MCP inicializada con %s", self.mcp_server_script)
