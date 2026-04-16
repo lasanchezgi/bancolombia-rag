@@ -34,8 +34,7 @@ class Reranker:
     def __init__(self, model_name: str = _DEFAULT_MODEL) -> None:
         if not RERANKER_AVAILABLE:
             logger.warning(
-                "sentence-transformers no instalado — reranker desactivado. "
-                "Instalar con: uv sync --extra reranking"
+                "sentence-transformers no instalado — reranker desactivado. " "Instalar con: uv sync --extra reranking"
             )
             self.model = None
             return
