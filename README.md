@@ -353,6 +353,33 @@ bancolombia-rag/
 
 ---
 
+## Deploy
+
+Para desplegar cambios en producción:
+
+1. Configura las variables en `.env`:
+
+   ```bash
+   DOCKER_IMAGE=lasanchezgi/bancolombia-rag:latest
+   EC2_HOST=98.81.30.8
+   EC2_USER=ec2-user
+   EC2_KEY_PATH=~/Downloads/bancolombia-rag-key.pem
+   ```
+
+2. Corre el script:
+
+   ```bash
+   ./scripts/deploy.sh
+   ```
+
+El script construye la imagen multi-arch (`linux/amd64` + `linux/arm64`),
+la sube a Docker Hub y despliega automáticamente en EC2 (pull + up + pipeline).
+
+> **Nota:** el `.pem` nunca va al repositorio. Se referencia por path local.
+> El `git push` sigue siendo manual y deliberado.
+
+---
+
 ## App desplegada
 
 🤖 [Asistente Bancolombia](http://98.81.30.8:8501/)

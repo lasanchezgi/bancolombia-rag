@@ -1,5 +1,6 @@
 # ─── Secretos ─────────────────────────────────────────────────────────────────
 .env
+*.pem
 
 # ─── Datos generados en runtime ───────────────────────────────────────────────
 # Usar glob (* no trailing slash) para que .gitkeep siga siendo rastreado
