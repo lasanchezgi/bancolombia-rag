@@ -285,6 +285,13 @@ class RAGAgent:
                             )
                             self._pending_mcp_call_ids.append(mcp_id)
 
+                        elif tool_name == "list_categories":
+                            mcp_id = self.logger.log_mcp_call(
+                                session_id=self.session_id,
+                                tool_name="list_categories",
+                            )
+                            self._pending_mcp_call_ids.append(mcp_id)
+
                         messages.append(
                             {
                                 "role": "tool",
