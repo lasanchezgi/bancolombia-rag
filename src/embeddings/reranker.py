@@ -1,8 +1,14 @@
 import logging
 
-from sentence_transformers import CrossEncoder
-
 logger = logging.getLogger(__name__)
+
+try:
+    from sentence_transformers import CrossEncoder
+
+    RERANKER_AVAILABLE = True
+except ImportError:
+    RERANKER_AVAILABLE = False
+    CrossEncoder = None  # type: ignore[assignment,misc]
 
 _DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
@@ -20,9 +26,19 @@ class Reranker:
 
     Esto mejora la precisión del retrieval sin reemplazar
     ChromaDB — lo complementa.
+
+    Si sentence-transformers no está instalado, retorna los
+    documentos sin reordenar (fallback graceful).
     """
 
     def __init__(self, model_name: str = _DEFAULT_MODEL) -> None:
+        if not RERANKER_AVAILABLE:
+            logger.warning(
+                "sentence-transformers no instalado — reranker desactivado. "
+                "Instalar con: uv sync --extra reranking"
+            )
+            self.model = None
+            return
         self.model = CrossEncoder(model_name)
         logger.info("Reranker inicializado: %s", model_name)
 
@@ -42,6 +58,9 @@ class Reranker:
         """
         if not documents:
             return []
+        if self.model is None:
+            logger.warning("Reranker no disponible — retornando documentos sin reordenar")
+            return documents[:top_k]
         try:
             pairs = [(query, doc["text"]) for doc in documents]
             scores = self.model.predict(pairs)

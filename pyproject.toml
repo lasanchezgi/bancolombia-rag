@@ -18,8 +18,12 @@ dependencies = [
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "lxml>=6.0.2",
-    "sentence-transformers>=3.0.0",
     "pandas>=2.0.0",
+]
+
+[project.optional-dependencies]
+reranking = [
+    "sentence-transformers>=3.0.0",
 ]
 
 [tool.setuptools.packages.find]

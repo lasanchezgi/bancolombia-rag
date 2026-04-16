@@ -15,6 +15,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import FastMCP
 
+from src.embeddings.reranker import RERANKER_AVAILABLE
+
+pytestmark = pytest.mark.skipif(
+    not RERANKER_AVAILABLE,
+    reason="sentence-transformers no instalado (instalar con: uv sync --extra reranking)",
+)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
