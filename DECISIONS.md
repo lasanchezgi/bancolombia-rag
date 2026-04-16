@@ -873,6 +873,54 @@ explícitos temporales.
 
 ---
 
+## ADR-017: sentence-transformers como dependencia opcional
+
+**Estado:** Aceptado
+**Fecha:** Abril 2026
+
+**Contexto:**
+El reranker Cross-Encoder requiere sentence-transformers,
+que instala PyTorch y dependencias CUDA de NVIDIA (~7GB).
+La imagen Docker resultaba de 8.9GB — imposible de desplegar
+en EC2 t3.small con 20GB de disco total.
+
+**Decisión:**
+sentence-transformers se declara como dependencia opcional
+en pyproject.toml. La imagen de producción se construye sin
+ella (USE_RERANKING=false por defecto en EC2).
+
+El reranker tiene import condicional en reranker.py:
+si sentence-transformers no está instalado, retorna los
+documentos sin reordenar (fallback graceful).
+
+**Alternativas descartadas:**
+
+- **Incluir PyTorch en producción**: imagen de 8.9GB,
+  imposible en t3.small.
+- **Migrar a t3.medium o t3.large**: costo adicional
+  innecesario para el scope de esta prueba técnica.
+- **Usar un modelo de reranking más liviano (TF-IDF)**:
+  menor calidad que Cross-Encoder, no justifica el cambio.
+
+**Consecuencias:**
+
+- Imagen de producción: ~1GB (vs 8.9GB con PyTorch)
+- Reranking disponible en desarrollo local con
+  USE_RERANKING=true
+- En producción el retrieval usa ChromaDB directo (top-5
+  por similitud coseno) sin reranking
+- El impacto en calidad está medido: F1 baja de 0.926
+  (con reranking) a 0.888 (sin reranking) — diferencia
+  de 4.3 puntos porcentuales aceptable para producción
+
+**Plan de escalabilidad:**
+Migrar a t3.medium (~$0.04/hr) o usar un servicio de
+reranking dedicado con caché permitiría activar
+USE_RERANKING=true en producción sin impacto en el
+tamaño de imagen.
+
+---
+
 ## Mejoras futuras identificadas
 
 Estas mejoras fueron identificadas durante el desarrollo pero no implementadas en la versión
