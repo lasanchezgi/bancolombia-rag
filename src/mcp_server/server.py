@@ -12,10 +12,13 @@ Uso:
 
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
 
 try:
     from .tools import preload_reranker, register_tools
@@ -60,7 +63,7 @@ if __name__ == "__main__":
     if transport == "sse":
         host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
         port = int(os.getenv("MCP_SERVER_PORT", "8000"))
-        print(f"Starting MCP server SSE on {host}:{port}")
+        logger.info("Starting MCP server SSE on %s:%s", host, port)
         server.run(transport="sse", host=host, port=port)
     else:
         server.run(transport="stdio")

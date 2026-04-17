@@ -761,7 +761,7 @@ de mejoras futuras implementadas) sobre estas métricas.
 **Decisión:**
 Pipeline de evaluación implementado en `notebooks/rag_evaluation.ipynb`:
 
-- **Dataset de evaluación**: 20 preguntas representativas sobre productos de Bancolombia,
+- **Dataset de evaluación**: 15 preguntas representativas sobre productos de Bancolombia,
   con respuestas de referencia escritas manualmente a partir de la documentación oficial.
 - **Métricas evaluadas**:
   - `faithfulness_score`: fracción de afirmaciones en la respuesta verificables en los

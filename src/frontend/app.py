@@ -43,7 +43,7 @@ def _get_agent():
 
 
 def init_session() -> None:
-    """Inicializa el estado de sesión de Streamlit en el primer carge.
+    """Inicializa el estado de sesión de Streamlit en el primer cargue.
 
     Crea la instancia del RAGAgent y la lista de mensajes del chat
     si aún no existen en st.session_state. Idempotente.
